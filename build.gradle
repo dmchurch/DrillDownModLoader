@@ -1,0 +1,26 @@
+plugins {
+	id 'application'
+}
+
+application {
+	mainClass = 'de.dakror.quarry.Bootstrapper'
+}
+
+sourceSets {
+	main {
+		java {
+			srcDirs = ['src']
+		}
+	}
+}
+
+repositories { 
+    mavenCentral()
+}
+
+dependencies {
+	implementation files('../TheQuarry-full.jar')
+	implementation 'de.juplo:scannotation:1.0.4' // 1.0.3 has an unfixed bug around classpath directories
+	implementation 'org.javassist:javassist:3.28.0-GA'
+	// implementation 'net.bytebuddy:byte-buddy:1.12.2'
+}
