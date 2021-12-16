@@ -5,12 +5,12 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
 import de.dakror.modding.ModLoader.DebugContext;
 import javassist.CannotCompileException;
 import javassist.ClassMap;
 import javassist.ClassPool;
-import javassist.CodeConverter;
 import javassist.CtBehavior;
 import javassist.CtClass;
 import javassist.CtConstructor;
@@ -19,9 +19,14 @@ import javassist.CtMember;
 import javassist.CtMethod;
 import javassist.Modifier;
 import javassist.NotFoundException;
+import javassist.bytecode.BadBytecode;
 import javassist.bytecode.Bytecode;
+import javassist.bytecode.CodeAttribute;
+import javassist.bytecode.CodeIterator;
+import javassist.bytecode.ConstPool;
 import javassist.bytecode.Descriptor;
 import javassist.bytecode.MethodInfo;
+import javassist.convert.Transformer;
 
 // package-local, not public, so as not to offer confusion with the @AugmentationClass attribute
 class ClassAugmentation implements ModLoader.IClassAugmentation, ModLoader.IClassMod<CtClass, ClassPool> {
@@ -97,7 +102,7 @@ class ClassAugmentation implements ModLoader.IClassAugmentation, ModLoader.IClas
     }
 
     protected static interface IMemberVisitor {
-        void visitMember(CtMember member, CtMember baseMember) throws CannotCompileException, NotFoundException, IOException;
+        void visitMember(CtMember member, CtMember baseMember, String key, Map<String, ? extends CtMember> memberMap) throws CannotCompileException, NotFoundException, IOException;
     }
 
     protected class AugmentationChain {
@@ -184,10 +189,8 @@ class ClassAugmentation implements ModLoader.IClassAugmentation, ModLoader.IClas
 
             abstract public List<CtClass> compile() throws NotFoundException, CannotCompileException, IOException;
 
-            public <M extends CtMember> M compileMemberChecks(String key, M member, Map<String, M> instanceMap, Map<String, M> staticMap) throws CannotCompileException {
+            public <M extends CtMember> M compileMemberChecks(M member, String key, Map<String, M> map) throws CannotCompileException {
                 var mod = member.getModifiers();
-                var isStatic = Modifier.isStatic(mod);
-                var map = isStatic ? staticMap : instanceMap;
                 var baseMember = map.get(key);
                 if (Modifier.isPrivate(mod) && baseMember == null) {
                     return null;
@@ -206,26 +209,27 @@ class ClassAugmentation implements ModLoader.IClassAugmentation, ModLoader.IClas
             }
 
             @Override
-            public void visitMember(CtMember member, CtMember baseMember) throws CannotCompileException, NotFoundException, IOException {
+            @SuppressWarnings("unchecked")
+            public void visitMember(CtMember member, CtMember baseMember, String key, Map<String, ? extends CtMember> memberMap) throws CannotCompileException, NotFoundException, IOException {
                 if (member instanceof CtField) {
-                    visitField((CtField)member, (CtField)baseMember);
+                    visitField((CtField)member, (CtField)baseMember, key, (Map<String, CtField>)memberMap);
                 } else if (member instanceof CtConstructor) {
-                    visitCtor((CtConstructor)member, (CtConstructor)baseMember);
+                    visitCtor((CtConstructor)member, (CtConstructor)baseMember, key, (Map<String, CtConstructor>)memberMap);
                 } else if (member instanceof CtMethod) {
-                    visitMethod((CtMethod)member, (CtMethod)baseMember);
+                    visitMethod((CtMethod)member, (CtMethod)baseMember, key, (Map<String, CtMethod>)memberMap);
                 }
             }
 
-            protected void visitField(CtField field, CtField baseField) throws CannotCompileException, NotFoundException, IOException {
+            protected void visitField(CtField field, CtField baseField, String key, Map<String, CtField> fieldMap) throws CannotCompileException, NotFoundException, IOException {
                 if (baseField != null && baseField.getType() != field.getType()) {
                     throw new CannotCompileException("Augmentation field "+visitingClass.getName()+"#"+field.getName()+" type "+field.getType()+" differs from base type "+baseField.getType());
                 }
             }
 
-            protected void visitCtor(CtConstructor ctor, CtConstructor baseCtor) throws CannotCompileException, NotFoundException, IOException {
+            protected void visitCtor(CtConstructor ctor, CtConstructor baseCtor, String key, Map<String, CtConstructor> ctorMap) throws CannotCompileException, NotFoundException, IOException {
             }
 
-            protected void visitMethod(CtMethod method, CtMethod baseMethod) throws CannotCompileException, NotFoundException, IOException {
+            protected void visitMethod(CtMethod method, CtMethod baseMethod, String key, Map<String, CtMethod> methodMap) throws CannotCompileException, NotFoundException, IOException {
                 if (baseMethod != null && baseMethod.getReturnType() != method.getReturnType()) {
                     throw new CannotCompileException("Augmentation method "+method.getLongName()+" return type "+method.getReturnType()+" differs from base return type "+baseMethod.getReturnType());
                 }
@@ -243,21 +247,24 @@ class ClassAugmentation implements ModLoader.IClassAugmentation, ModLoader.IClas
                 sigmap.put(ctClass, baseClass);
                 sigmap.put(ctClass.getSuperclass(), baseClass);
                 for (var field: ctClass.getDeclaredFields()) {
-                    var baseField = compileMemberChecks(field.getName(), field, instanceFields, staticFields);
+                    var key = field.getName();
+                    var map = Modifier.isStatic(field.getModifiers()) ? staticFields : instanceFields;
+                    var baseField = compileMemberChecks(field, key, map);
                     members.add(field);
-                    visitor.visitMember(field, baseField);
+                    visitor.visitMember(field, baseField, key, map);
                 }
                 for (var ctor: ctClass.getDeclaredConstructors()) {
                     var key = ctor.getName().equals(MethodInfo.nameClinit) ? "" : Descriptor.rename(ctor.getSignature(), sigmap);
-                    var baseCtor = compileMemberChecks(key, ctor, constructors, constructors);
+                    var baseCtor = compileMemberChecks(ctor, key, constructors);
                     members.add(ctor);
-                    visitor.visitMember(ctor, baseCtor);
+                    visitor.visitMember(ctor, baseCtor, key, constructors);
                 }
                 for (var method: ctClass.getDeclaredMethods()) {
                     var key = method.getName() + "." + Descriptor.rename(method.getSignature(), sigmap);
-                    var baseMethod = compileMemberChecks(key, method, instanceMethods, staticMethods);
+                    var map = Modifier.isStatic(method.getModifiers()) ? staticMethods : instanceMethods;
+                    var baseMethod = compileMemberChecks(method, key, map);
                     members.add(method);
-                    visitor.visitMember(method, baseMethod);
+                    visitor.visitMember(method, baseMethod, key, map);
                 }
                 return members;
             }
@@ -266,14 +273,32 @@ class ClassAugmentation implements ModLoader.IClassAugmentation, ModLoader.IClas
         // The RenamingCompiler compiles an AugmentationChain by mutating the base class in-place, renaming methods and fields that have
         // been overridden in augmentations.
         protected class RenamingCompiler extends Compiler {
+            // conv will be used to intstrument the result class once all augmentations have been processed
             protected CodeConverter conv = new CodeConverter();
-            protected CodeConverter methodConv = new CodeConverter();
+            // methodConv will be used to instrument each method/constructor before adding to the result class
+            protected CodeConverter methodConv;
+
+            // a ClassMap that will override the default behavior of remapping class names when copying methods. We can't afford to let
+            // Javassist do auto-renaming because we're moving methods into their own parent class; in the inheritance tree
+            // Object→Base→Augment, where Base and Augment both define method foo(), a super.foo() in Augment (rendered as Base.foo() in
+            // the bytecode) would be transformed into a call to Object.foo(), which wouldn't work. So we have to do it on our own.
+            protected ClassMap fixMap;
+            protected List<CtMember> baseMembers;
+
+            // fields in augmentations are always renamed. This provides the mapping from old to new names and is used by RenamingTransformer
+            protected Map<CtField, CtField> renamedFieldMap = new HashMap<>();
+
             public List<CtClass> compile() throws NotFoundException, CannotCompileException, IOException {
                 if (targetClass.getName() != baseName) return null; // don't compile until we're looking at the base class
-                visitClassMembers(targetClass, (m,b)->{}); // register all base members in the maps, don't call visitors
+                baseMembers = visitClassMembers(targetClass, (m,b,k,x)->{}); // register all base members in the maps, don't call visitors
 
                 for (var augName: augmentations) {
                     var augClass = classPool.get(augName);
+                    methodConv = new CodeConverter();
+                    methodConv.addTransformer(next -> new RenamingTransformer(next, augClass, targetClass));
+                    fixMap = new ClassMap();
+                    fixMap.fix(augClass);
+                    fixMap.fix(augClass.getSuperclass());
                     visitClassMembers(augClass);
                 }
                 targetClass.instrument(conv);
@@ -286,29 +311,95 @@ class ClassAugmentation implements ModLoader.IClassAugmentation, ModLoader.IClas
             }
 
             @Override
-            protected void visitField(CtField field, CtField baseField) throws CannotCompileException, NotFoundException, IOException {
-                super.visitField(field, baseField);
+            protected void visitField(CtField field, CtField baseField, String key, Map<String, CtField> fieldMap) throws CannotCompileException, NotFoundException, IOException {
+                super.visitField(field, baseField, key, fieldMap);
                 var newName = renamed(field);
                 var newField = new CtField(field, targetClass);
-                methodConv.redirectFieldAccess(newField, targetClass, newName);
                 newField.setName(newName);
                 targetClass.addField(newField);
+                renamedFieldMap.put(field, newField);
                 conv.redirectFieldAccess(field, targetClass, newName);
             }
 
             @Override
-            protected void visitCtor(CtConstructor ctor, CtConstructor baseCtor) throws CannotCompileException, NotFoundException, IOException {
-                super.visitCtor(ctor, baseCtor);
+            protected void visitCtor(CtConstructor ctor, CtConstructor baseCtor, String key, Map<String, CtConstructor> ctorMap) throws CannotCompileException, NotFoundException, IOException {
+                super.visitCtor(ctor, baseCtor, key, ctorMap);
+                var newCtor = new CtConstructor(ctor, targetClass, fixMap);
+                newCtor.instrument(methodConv);
             }
 
             @Override
-            protected void visitMethod(CtMethod method, CtMethod baseMethod) throws CannotCompileException, NotFoundException, IOException {
-                super.visitMethod(method, baseMethod);
-                var newMethod = new CtMethod(method, targetClass, null);
+            protected void visitMethod(CtMethod method, CtMethod baseMethod, String key, Map<String, CtMethod> methodMap) throws CannotCompileException, NotFoundException, IOException {
+                super.visitMethod(method, baseMethod, key, methodMap);
+                var newMethod = new CtMethod(method, targetClass, fixMap);
                 newMethod.instrument(methodConv);
                 if (baseMethod == null) {
                     var newName = renamed(method);
                 }
+            }
+
+            // largely copied from javassist.convert.TransformFieldAccess, TransformNewClass, and TransformCall
+            protected class RenamingTransformer extends Transformer {
+                CtClass origClass;
+                CtClass newClass;
+                String origClassName;
+                String origSuperName;
+                String newClassName;
+                String newSuperName;
+
+                Map<Integer, Integer> fieldMap = new HashMap<>();
+
+
+                public RenamingTransformer(Transformer t, CtClass origClass, CtClass newClass) {
+                    super(t);
+                    this.origClass = origClass;
+                    this.newClass = newClass;
+                    this.origClassName = origClass.getName();
+                    this.origSuperName = origClass.getClassFile2().getSuperclass();
+                    this.newClassName = newClass.getName();
+                    this.newSuperName = newClass.getClassFile2().getSuperclass();
+                }
+
+                @Override
+                public int transform(CtClass clazz, int pos, CodeIterator iterator, ConstPool cp) {
+                    int c = iterator.byteAt(pos);
+                    if (c == GETFIELD) {
+                        transformFieldAccess(pos, false, false, iterator, cp);
+                    } else if (c == PUTFIELD) {
+                        transformFieldAccess(pos, true, false, iterator, cp);
+                    } else if (c == GETSTATIC) {
+                        transformFieldAccess(pos, false, true, iterator, cp);
+                    } else if (c == PUTSTATIC) {
+                        transformFieldAccess(pos, true, true, iterator, cp);
+                    }
+                    return pos;
+                }
+
+                protected void transformFieldAccess(int pos, boolean isPut, boolean isStatic, CodeIterator iterator, ConstPool cp) {
+                    int index = iterator.u16bitAt(pos + 1);
+                    var fieldClass = cp.getFieldrefClassName(index);
+                    if (fieldClass.equals(origClassName)) {
+                    } else if (fieldClass.equals(origSuperName)) {
+                    } else {
+                        return;
+                    }
+
+                    // String typedesc
+                    //     = TransformReadField.isField(clazz.getClassPool(), cp,
+                    //                     fieldClass, fieldname, isPrivate, index);
+                    // if (typedesc != null) {
+                    //     if (newIndex == 0) {
+                    //         int nt = cp.addNameAndTypeInfo(newFieldname,
+                    //                                         typedesc);
+                    //         newIndex = cp.addFieldrefInfo(
+                    //                             cp.addClassInfo(newClassname), nt);
+                    //         constPool = cp;
+                    //     }
+        
+                    //     iterator.write16bit(newIndex, pos + 1);
+                    // }
+                }
+
             }
         }
 
@@ -328,7 +419,7 @@ class ClassAugmentation implements ModLoader.IClassAugmentation, ModLoader.IClas
             }
 
             @Override
-            protected void visitField(CtField field, CtField baseField) throws CannotCompileException, NotFoundException, IOException {
+            protected void visitField(CtField field, CtField baseField, String key, Map<String, CtField> map) throws CannotCompileException, NotFoundException, IOException {
                 var fieldType = field.getType();
                 if (fieldType == visitingClass || fieldType == visitingClass.getSuperclass()) {
                     // update the type itself to the stub-class type
@@ -336,7 +427,7 @@ class ClassAugmentation implements ModLoader.IClassAugmentation, ModLoader.IClas
                     // now update any fieldref in the const pool to fix code
                     // var cp = ctClass.getClassFile().getConstPool();
                 }
-                super.visitField(field, baseField);
+                super.visitField(field, baseField, key, map);
                 if (Modifier.isStatic(field.getModifiers()) && !Modifier.isPrivate(field.getModifiers())) {
                     // all static fields get moved to the stub
                     visitingClass.removeField(field);
@@ -345,14 +436,14 @@ class ClassAugmentation implements ModLoader.IClassAugmentation, ModLoader.IClas
             }
 
             @Override
-            protected void visitCtor(CtConstructor ctor, CtConstructor baseCtor) throws CannotCompileException, NotFoundException, IOException {
-                super.visitCtor(ctor, baseCtor);
+            protected void visitCtor(CtConstructor ctor, CtConstructor baseCtor, String key, Map<String, CtConstructor> map) throws CannotCompileException, NotFoundException, IOException {
+                super.visitCtor(ctor, baseCtor, key, map);
                 normalizeParamTypes(ctor, stubClass);
             }
 
             @Override
-            protected void visitMethod(CtMethod method, CtMethod baseMethod) throws CannotCompileException, NotFoundException, IOException {
-                super.visitMethod(method, baseMethod);
+            protected void visitMethod(CtMethod method, CtMethod baseMethod, String key, Map<String, CtMethod> map) throws CannotCompileException, NotFoundException, IOException {
+                super.visitMethod(method, baseMethod, key, map);
                 if (visitingClass.getName() != augmentedName) {
                     // augmented classes don't need method redirection, but augmentation classes do
 
@@ -430,5 +521,93 @@ class ClassAugmentation implements ModLoader.IClassAugmentation, ModLoader.IClas
                 return compiledClasses;
             }
         }
+    }
+    // extension of CodeConverter that allows some extra operations
+    public static class CodeConverter extends javassist.CodeConverter {
+        // normally, transformers get executed starting with the last one added, LIFO order. this reverses the
+        // list (into FIFO order, if this is the only time you've called it)
+        public void reverseTransformers() {
+            Transformer reversedTransformers = transformers;
+            transformers = null;
+            for (var t = reversedTransformers; t != null; t = t.getNext()) {
+                transformers = TransformerProxy.make(t).setNext(transformers);
+            }
+        }
+
+        public void addTransformer(Transformer t) {
+            transformers = TransformerProxy.make(t).setNext(transformers);
+        }
+
+        public void addTransformer(Function<Transformer, Transformer> makeTransformerFromNext) {
+            transformers = makeTransformerFromNext.apply(transformers);
+        }
+
+        public Transformer popTransformer() {
+            var ret = transformers;
+            transformers = transformers.getNext();
+            return ret;
+        }
+    }
+    public static class TransformerProxy extends Transformer {
+        protected Transformer target;
+        protected Transformer next; // superclass field is private, bleh
+
+        public static TransformerProxy make(Transformer target) {
+            while (target instanceof TransformerProxy) {
+                target = ((TransformerProxy)target).target;
+            }
+            return new TransformerProxy(null, target);
+        }
+
+        public static TransformerProxy make(Transformer target, Transformer next) {
+            return make(target).setNext(next);
+        }
+
+        public TransformerProxy(Transformer next, Transformer target) {
+            super(next);
+            this.next = next;
+            this.target = target;
+        }
+
+        public Transformer getNext() {
+            return next;
+        }
+
+        public TransformerProxy setNext(Transformer next) {
+            this.next = next;
+            return this;
+        }
+
+        @Override
+        public void initialize(ConstPool cp, CodeAttribute attr) {
+            target.initialize(cp, attr);
+        }
+
+        @Override
+        public void initialize(ConstPool cp, CtClass clazz, MethodInfo minfo) throws CannotCompileException {
+            target.initialize(cp, clazz, minfo);
+        }
+
+        @Override
+        public void clean() {
+            target.clean();
+        }
+
+        @Override
+        public int transform(CtClass clazz, int pos, CodeIterator it, ConstPool cp)
+                throws CannotCompileException, BadBytecode {
+            return target.transform(clazz, pos, it, cp);
+        }
+
+        @Override
+        public int extraLocals() {
+            return target.extraLocals();
+        }
+
+        @Override
+        public int extraStack() {
+            return target.extraStack();
+        }
+
     }
 }
