@@ -6,7 +6,12 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.WeakHashMap;
 
+import de.dakror.modding.asm.ASMModLoader;
+import de.dakror.modding.javassist.JavassistModLoader;
+import de.dakror.modding.javassist.JavassistStackedModLoader;
 import de.dakror.modding.loader.IModLoader;
 import de.dakror.modding.loader.ModClassLoader;
 
@@ -15,8 +20,8 @@ import de.dakror.modding.loader.ModClassLoader;
  * chicken-and-egg problems; the actual ClassLoader responsible is an instance of {@link ModClassLoader},
  * which by necessity lives in its own separate package (Java doesn't like it when classes of a given
  * package are loaded by two separate ClassLoaders) and delegates to an instance of ModLoader for the
- * actual "modding" part of the process. Currently, there are two implementations of ModLoader: the
- * {@link ClassPoolModLoader} and the {@link StackedClassPoolModLoader}. I'm probably going to
+ * actual "modding" part of the process. Currently, there are three implementations of ModLoader: the {@link ASMModLoader},
+ * the {@link JavassistModLoader}, and the {@link JavassistStackedModLoader}. I'm probably going to
  * standardize on the former, since it's not quite so heavy on the memory usage, but there's no reason
  * other implementations couldn't be explored, for example to experiment with other bytecode-manipulation
  * libraries than Javassist.
@@ -27,7 +32,7 @@ import de.dakror.modding.loader.ModClassLoader;
  * which is true in a broader sense, but what isn't mentioned is that two different definitions of
  * the same classname can't interact with each other, and they certainly can't inherit from each other.
  * This means that performing class augmentation requires bytecode modification and not just loader
- * tricks; this functionality is currently extracted to the {@link ClassAugmentation} class, which
+ * tricks; this functionality is currently extracted to the {@link ClassAugmentationBase} class, which
  * itself is under construction and has a couple different implementations as well; see the comments
  * for that class, whenever I write them.
  * <p>
@@ -116,7 +121,8 @@ abstract public class ModLoader implements IModLoader {
     protected List<IResourceMod> resourceMods = new ArrayList<>();
 
     public static IModLoader newInstance(ModClassLoader modClassLoader, String[] args) {
-        var modLoader = new ClassPoolModLoader();
+        // var modLoader = new ClassPoolModLoader();
+        var modLoader = new ASMModLoader();
         return modLoader;
     }
 
@@ -127,16 +133,10 @@ abstract public class ModLoader implements IModLoader {
         this.modUrls = modUrls;
 
         implInit();
-        registerBaseMods();
         return this;
     }
 
     abstract protected void implInit();
-
-    protected void registerBaseMods() {
-        registerMod(new ClassReplacement());
-        registerMod(new ClassAugmentation());
-    }
 
     public void replaceClass(String replacedClass, String replacementClass) {
         getMod(IClassReplacement.class).replaceClass(replacedClass, replacementClass);
@@ -208,7 +208,11 @@ abstract public class ModLoader implements IModLoader {
             resourceMods.add((IResourceMod)mod);
         }
         if (mod instanceof IClassMod<?,?>) {
-            registerClassMod((IClassMod<?,?>)mod);
+            try {
+                registerClassMod((IClassMod<?,?>)mod);
+            } catch (ClassCastException e) {
+                debugln("Skipping registration of "+mod.toString()+" (not supported by this ModLoader?): "+e.getMessage());
+            }
         }
     }
 
@@ -269,7 +273,29 @@ abstract public class ModLoader implements IModLoader {
         return stream;
     }
 
-    abstract public byte[] redefineClass(String name, Class<?> origClass) throws ClassNotFoundException;
+    protected <T, C> T applyMods(List<IClassMod<T, C>> classMods, String name, T classDef, C context)  {
+        for (var mod: classMods) {
+            if (mod.hooksClass(name)) {
+                try {
+                    classDef = mod.redefineClass(name, classDef, context);
+                } catch (ClassNotFoundException e) {
+                    debugln(mod.getClass().getName()+".redefineClass("+name+" threw CNFE, skipping");
+                } catch (NullPointerException e) {
+                    if (classDef == null) {
+                        // this is reasonable, just skip
+                    } else {
+                        throw e;
+                    }
+                }
+            }
+        }
+        if (classDef == null) {
+            throw new RuntimeException("did not get a classDef after mods, despite being hooked");
+        }
+        return classDef;
+    }
+
+    abstract public byte[] redefineClass(String name) throws ClassNotFoundException;
 
     public void start(String mainClass, String[] args) throws Exception {
         var patcher = new Patcher(modUrls);
@@ -291,8 +317,8 @@ abstract public class ModLoader implements IModLoader {
     public static interface IClassMod<T, C> extends IBaseMod {
         boolean hooksClass(String className);
         T redefineClass(String className, T classDef, C context) throws ClassNotFoundException;
-        default boolean accepts(Class<?> classDefType, Class<?> contextType) {
-            for (var method: this.getClass().getMethods()) {
+        static boolean accepts(Class<?> modClassType, Class<?> classDefType, Class<?> contextType) {
+            for (var method: modClassType.getMethods()) {
                 if (method.getName() != "redefineClass") continue;
                 if (classDefType != null) {
                     if (!method.getParameterTypes()[1].isAssignableFrom(classDefType) || !classDefType.isAssignableFrom(method.getReturnType())) {
@@ -308,13 +334,36 @@ abstract public class ModLoader implements IModLoader {
             }
             return false;
         }
+        default boolean accepts(Class<?> classDefType, Class<?> contextType) {
+            return accepts(this.getClass(), classDefType, contextType);
+        }
 
         @SuppressWarnings("unchecked")
         default <U, D> IClassMod<U, D> asType(Class<U> classDefType, Class<D> contextType) throws ClassCastException {
             if (accepts(classDefType, contextType)) {
                 return (IClassMod<U, D>)this;
+            } else {
+                var thisClass = this.getClass();
+                for (var subClass: thisClass.getDeclaredClasses()) {
+                    if (And.class.isAssignableFrom(subClass) && accepts(subClass, classDefType, contextType)) {
+                        try {
+                            var subMod = (IClassMod.And<U,D>)subClass.getDeclaredConstructor(thisClass).newInstance(this);
+                            And.andToBase.put(subMod, this);
+                            return subMod;
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                }
             }
             throw new ClassCastException("Class mod "+getClass().getName()+" does not accept ("+classDefType.getName()+", "+contextType.getName()+")");
+        }
+
+        public static interface And<U, D> extends IClassMod<U, D> {
+            static Map<And<?,?>, IClassMod<?, ?>> andToBase = new WeakHashMap<>();
+            default boolean hooksClass(String className) {
+                return andToBase.get(this).hooksClass(className);
+            }
         }
     }
     public static interface IResourceMod extends IBaseMod {
@@ -334,7 +383,7 @@ abstract public class ModLoader implements IModLoader {
 
     private static int indent = 0;
 
-    static void debugln(String msg) {
+    public static void debugln(String msg) {
         System.out.println(String.format("%s:%"+(indent+1)+"s%s", "ModLoader","",msg));
     }
 

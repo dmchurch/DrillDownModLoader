@@ -1,15 +1,16 @@
-package de.dakror.modding;
+package de.dakror.modding.javassist;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+import de.dakror.modding.ModLoader;
 import javassist.CannotCompileException;
 import javassist.ClassPool;
 import javassist.CtClass;
 import javassist.LoaderClassPath;
 
-public class ClassPoolModLoader extends ModLoader {
+public class JavassistModLoader extends ModLoader {
     protected ClassPool classPool;
     protected List<IClassMod<CtClass, ClassPool>> classMods = new ArrayList<>();
 
@@ -17,6 +18,9 @@ public class ClassPoolModLoader extends ModLoader {
     protected void implInit() {
         classPool = new ClassPool();
         classPool.insertClassPath(new LoaderClassPath(classLoader));
+
+        registerMod(new ClassReplacementImpl());
+        registerMod(new ClassAugmentationImpl());
     }
 
     public ClassPool getClassPool() {
@@ -54,19 +58,11 @@ public class ClassPoolModLoader extends ModLoader {
     }
 
     @Override
-    public byte[] redefineClass(String name, Class<?> origClass) throws ClassNotFoundException {
-        CtClass cc = classPool.getOrNull(name);
-
-        cc = redefineCtClass(name, cc);
-
-        if (cc == null) {
-            throw new RuntimeException("did not get a CtClass after mods, despite being hooked");
-        }
+    public byte[] redefineClass(String name) throws ClassNotFoundException {
         try {
-            return cc.toBytecode();
+            return applyMods(classMods, name, classPool.getOrNull(name), classPool).toBytecode();
         } catch (IOException|CannotCompileException e) {
             throw new RuntimeException(e);
         }
     }
-    
 }

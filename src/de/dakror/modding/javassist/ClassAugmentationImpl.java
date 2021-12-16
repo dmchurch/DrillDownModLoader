@@ -1,4 +1,4 @@
-package de.dakror.modding;
+package de.dakror.modding.javassist;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -7,7 +7,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
-import de.dakror.modding.ModLoader.DebugContext;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.Opcodes;
+
+import de.dakror.modding.ClassAugmentationBase;
 import javassist.CannotCompileException;
 import javassist.ClassMap;
 import javassist.ClassPool;
@@ -28,115 +32,18 @@ import javassist.bytecode.Descriptor;
 import javassist.bytecode.MethodInfo;
 import javassist.convert.Transformer;
 
-// package-local, not public, so as not to offer confusion with the @AugmentationClass attribute
-class ClassAugmentation implements ModLoader.IClassAugmentation, ModLoader.IClassMod<CtClass, ClassPool> {
-    // maps all classes in an aug chain to the AugmentationChain object
-    private Map<String, AugmentationChain> augmentationChains = new HashMap<>();
-
-    public void augmentClass(String baseClass, String augmentationClass) {
-        assert baseClass != augmentationClass;
-        var augChain = augmentationChains.getOrDefault(baseClass, new AugmentationChain(baseClass));
-        var subChain = augmentationChains.get(augmentationClass);
-
-        // augChain.addAugmentation() also adds the item to this.augmentationChains, so we need to fetch subChain beforehand
-        if (augChain.addAugmentation(augmentationClass) && subChain != null && subChain != augChain) {
-            // this aug class had a chain of its own, add all its augments to the base, forcing them to the end of the list
-            subChain.augmentations.forEach(subAug -> augChain.addAugmentation(subAug, true));
-        }
+public class ClassAugmentationImpl extends ClassAugmentationBase<CtClass, ClassPool> {
+    protected AugmentationChain newAugmentationChain(String className) {
+        return new AugmentationChain(className);
     }
 
-    @Override
-    public boolean hooksClass(String className) {
-        return augmentationChains.containsKey(className);
-    }
-
-    @Override
-    public CtClass redefineClass(String className, CtClass ctClass, ClassPool classPool)
-            throws ClassNotFoundException {
-        try (var ctx = new DebugContext("ClassAugmentation#redefineClass "+className)) {
-            return augmentationChains.get(className).redefineClass(className, ctClass, classPool);
-            /*
-        var baseClass = augmentedClasses.containsKey(className) ? className : augmentationClasses.get(className);
-        var augList = augmentedClasses.get(baseClass);
-        var staticsMap = new HashMap<String, String>(); // mapping static field/method name to latest class that declares it
-        if (className == baseClass) {
-            // the base class gets inherited by the first augmentation
-            ModLoader.debugln("base class inherit by "+augList.get(0)+" (as "+className+"__Augmented)");
-            recordStatics(ctClass, staticsMap);
-            // augmentationLoaders.putIfAbsent(augList.get(0), new SubLoader(loader, className, augList.get(0), origClass));
-            // the base class redirects to the latest augmentation
-            var lastAug = augList.get(augList.size()-1);
-            ModLoader.debugln("base class redirect to "+lastAug);
-            try {
-                return classPool.makeClass(className, classPool.get(lastAug));
-                // return synthLoader.defineSynthClass(className, stubClass.toBytecode(), origClass.getProtectionDomain());
-            } catch (NotFoundException e) {
-                System.err.println("Error creating or defining stub class for "+className+": "+e.getMessage());
-                throw new ClassNotFoundException(e.getMessage());
-            }
-        }
-        var augIndex = augList.indexOf(className);
-        assert augIndex >= 0;
-        // each augmentation references the previous; the first references the base class under its __Augmented name
-        var augBase = augIndex == 0 ? baseClass + "__Augmented" : augList.get(augIndex - 1);
-        ModLoader.debugln("rewriting augmentation class "+className+" superclass from "+baseClass+" to "+augBase);
-        ctClass.getClassFile().renameClass(baseClass, augBase);
-        return ctClass;
-        // // each augmentation gets inherited by the next
-        // // if (augIndex < augList.size() - 1) {
-        // //     augmentationLoaders.putIfAbsent(augList.get(augIndex+1), new SubLoader(loader, baseClass, augList.get(augIndex+1), origClass));
-        // // }
-        // // if this class's base hasn't been loaded yet, do that
-        // if (!augmentationLoaders.containsKey(className)) {
-        //     loader.loadClass(augIndex > 0 ? augList.get(augIndex - 1) : baseClass);
-        // }
-        // var augLoader = augmentationLoaders.get(className);
-        // if (augLoader == null) {
-        //     System.err.println("No augmentation loader for "+className);
-        //     throw new ClassNotFoundException();
-        // }
-        // augLoader.setOriginalSubClass(origClass);
-        // return augLoader.loadClass(className);
-        */
-        }
-    }
-
-    protected static interface IMemberVisitor {
-        void visitMember(CtMember member, CtMember baseMember, String key, Map<String, ? extends CtMember> memberMap) throws CannotCompileException, NotFoundException, IOException;
-    }
-
-    protected class AugmentationChain {
-        public String baseName;
-        public String augmentedName;
-        public List<String> augmentations = new ArrayList<>();
-        public boolean compiled = false;
-
-        private Map<String, CtClass> compiledClasses = null;
+    protected class AugmentationChain extends ClassAugmentationBase<CtClass, ClassPool>.AugmentationChain {
 
         public AugmentationChain(String baseClass) {
-            baseName = baseClass;
-            augmentedName = baseName + "__Augmented";
-            augmentationChains.put(baseName, this);
-            augmentationChains.put(augmentedName, this);
+            super(baseClass);
         }
-        public boolean addAugmentation(String augmentation) {
-            return addAugmentation(augmentation, false);
-        }
-        public boolean addAugmentation(String augmentation, boolean force) {
-            if (compiled) {
-                throw new RuntimeException("Tried to add augmentation "+augmentation+" to chain for "+baseName+", which is already compiled");
-            }
-            if (augmentations.contains(augmentation)) {
-                if (force) {
-                    augmentations.remove(augmentation);
-                } else {
-                    return false;
-                }
-            }
-            augmentations.add(augmentation);
-            augmentationChains.put(augmentation, this);
-            return true;
-        }
+
+        private Map<String, CtClass> compiledClasses = null;
 
         public boolean compile(CtClass ctClass, ClassPool classPool) throws NotFoundException, CannotCompileException, IOException {
             if (compiled) return true;
@@ -153,6 +60,13 @@ class ClassAugmentation implements ModLoader.IClassAugmentation, ModLoader.IClas
             return true;
         }
 
+        public boolean compile(String className, ClassReader reader) {
+            if (compiled) return true;
+
+            compiled = true;
+            return true;
+        }
+
         public CtClass redefineClass(String className, CtClass ctClass, ClassPool classPool) throws ClassNotFoundException {
             try {
                 compile(ctClass, classPool);
@@ -162,13 +76,37 @@ class ClassAugmentation implements ModLoader.IClassAugmentation, ModLoader.IClas
             }
         }
 
+        public ClassVisitor redefineClass(String className, ClassVisitor nextVisitor, ClassReader reader) {
+            compile(className, reader);
+            return new AugmentationVisitor(nextVisitor, reader);
+        }
+
+        protected class AugmentationVisitor extends ClassVisitor {
+            protected ClassReader reader;
+            protected String[] interfaces;
+
+            public AugmentationVisitor(ClassVisitor classVisitor, ClassReader reader) {
+                super(Opcodes.ASM9, classVisitor);
+                this.reader = reader;
+                interfaces = reader.getInterfaces();
+
+            }
+
+            @Override
+            public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+                this.interfaces = interfaces;
+
+                super.visit(version, access, name, signature, superName, this.interfaces);
+            }
+        }
+
         protected Compiler compilerFor(CtClass targetClass, ClassPool classPool) {
             Compiler compiler = new RenamingCompiler();
             compiler.init(targetClass, classPool);
             return compiler;
         }
 
-        abstract protected class Compiler implements IMemberVisitor {
+        abstract protected class Compiler implements ClassAugmentationImpl.IMemberVisitor {
             protected CtClass targetClass;
             protected CtClass visitingClass;
             protected ClassPool classPool;
@@ -239,7 +177,7 @@ class ClassAugmentation implements ModLoader.IClassAugmentation, ModLoader.IClas
                 return visitClassMembers(ctClass, this);
             }
 
-            protected List<CtMember> visitClassMembers(CtClass ctClass, IMemberVisitor visitor) throws CannotCompileException, NotFoundException, IOException {
+            protected List<CtMember> visitClassMembers(CtClass ctClass, ClassAugmentationImpl.IMemberVisitor visitor) throws CannotCompileException, NotFoundException, IOException {
                 visitingClass = ctClass;
                 List<CtMember> members = new ArrayList<>();
                 ClassMap sigmap = new ClassMap();
@@ -609,5 +547,8 @@ class ClassAugmentation implements ModLoader.IClassAugmentation, ModLoader.IClas
             return target.extraStack();
         }
 
+    }
+    protected static interface IMemberVisitor {
+        void visitMember(CtMember member, CtMember baseMember, String key, Map<String, ? extends CtMember> memberMap) throws CannotCompileException, NotFoundException, IOException;
     }
 }

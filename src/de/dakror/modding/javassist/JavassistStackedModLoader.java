@@ -1,17 +1,15 @@
-package de.dakror.modding;
+package de.dakror.modding.javassist;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.net.URL;
-import java.util.ArrayList;
-import java.util.List;
 
+import de.dakror.modding.ModLoader;
 import javassist.CannotCompileException;
 import javassist.ClassPool;
 import javassist.CtClass;
 import javassist.NotFoundException;
 
-public class StackedClassPoolModLoader extends ClassPoolModLoader {
+public class JavassistStackedModLoader extends JavassistModLoader {
     protected ClassPool baseClassPool;
 
     @Override
@@ -27,7 +25,7 @@ public class StackedClassPoolModLoader extends ClassPoolModLoader {
     @Override
     protected void registerCtClassMod(IClassMod<CtClass, ClassPool> mod) {
         super.registerCtClassMod(mod);
-        classPool = new StackedClassPoolModLoader.ModClassPool(classPool, mod);
+        classPool = new JavassistStackedModLoader.ModClassPool(classPool, mod);
     }
 
     @Override

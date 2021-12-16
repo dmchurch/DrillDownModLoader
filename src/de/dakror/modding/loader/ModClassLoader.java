@@ -1,5 +1,7 @@
 package de.dakror.modding.loader;
 
+import java.applet.Applet;
+
 // there must be NO imports in here outside the java.* namespace
 
 import java.io.File;
@@ -8,6 +10,8 @@ import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.security.ProtectionDomain;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -84,29 +88,45 @@ public class ModClassLoader extends URLClassLoader {
         return (i == -1) ? "" : className.substring(0, i);
     }
 
+    public long time=0;
+    public int count=0;
+
     // findClass is only called the first time we look for a class, and ONLY if the system
     // classloader couldn't find it (so it won't be called for java.* classes, etc).
     @Override
     protected Class<?> findClass(String name) throws ClassNotFoundException {
-        if (modLoader == null || !modLoader.classHooked(name)) {
-            return recordPD(super.findClass(name));
-        }
-
-        Class<?> orig = null;
+        Instant start = Instant.now();
+        Class<?> loadedClass = null;
         try {
-            // we use the appLoader here rather than super.findClass() because it would defineClass()
-            orig = recordPD(appLoader.loadClass(name));
-        } catch (ClassNotFoundException e) {
-        }
-
-        byte[] code = modLoader.redefineClass(name, orig);
-        if (code == null) {
-            if (orig != null) {
-                return orig;
+            if (modLoader == null || !modLoader.classHooked(name)) {
+                return recordPD(super.findClass(name));
             }
-            throw new ClassNotFoundException(name);
+
+            byte[] code = modLoader.redefineClass(name);
+            if (code == null) {
+                return recordPD(super.findClass(name));
+            }
+            ProtectionDomain pd = packageDomains.get(getPackageName(name));
+            if (pd == null) {
+                pd = recordPD(appLoader.loadClass(name)).getProtectionDomain();
+            }
+            return loadedClass = defineClass(name, code, 0, code.length, pd);
+        } catch (Exception e) {
+            start = null;
+            throw e;
+        } finally {
+            if (start != null) {
+                var elapsed = ChronoUnit.NANOS.between(start, Instant.now());
+                count++;
+                time += elapsed;
+                if (modLoader != null) {
+                    modLoader.reportLoad(name, loadedClass, elapsed);
+                }
+            }
+            if (name.equals("com.badlogic.gdx.math.Interpolation$BounceIn")) {
+                System.out.println(String.format("Loaded %d classes in %d ns (%.3f ms), %.3f ms/class", count, time, (double)time/1000000.0, (double)time/1000000.0/count));
+            }
         }
-        return defineClass(name, code, 0, code.length, orig == null ? packageDomains.get(getPackageName(name)) : orig.getProtectionDomain());
     }
 
     public void start(String mainClass, String[] args) throws Exception {

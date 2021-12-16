@@ -9,6 +9,8 @@ public interface IModLoader {
     boolean resourceHooked(String name);
     boolean classHooked(String className);
 
-    byte[] redefineClass(String name, Class<?> origClass) throws ClassNotFoundException;
+    byte[] redefineClass(String name) throws ClassNotFoundException;
     InputStream redefineResourceStream(String resourceName, InputStream origStream);
+
+    default void reportLoad(String name, Class<?> loadedClass, long nsElapsed) {}
 }
