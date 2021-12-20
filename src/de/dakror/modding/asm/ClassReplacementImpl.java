@@ -21,7 +21,7 @@ public class ClassReplacementImpl extends ClassReplacementBase<ClassVisitor, Cla
         );
     }
 
-    protected class ReaderReplacement implements ModLoader.IClassMod.And<ClassReader, ASMModLoader> {
+    public class ReaderReplacement implements ModLoader.IClassMod.And<ClassReader, ASMModLoader> {
         public ClassReader redefineClass(String className, ClassReader reader, ASMModLoader modLoader) throws ClassNotFoundException {
             try {
                 return modLoader.newClassReader(replacedClasses.get(className));

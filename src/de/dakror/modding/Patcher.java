@@ -7,6 +7,8 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -39,13 +41,18 @@ public class Patcher {
 
     private AnnotationDB db;
     private ClassPool pool;
+    private ClassLoader cl;
 
     public Patcher(URL[] urls) throws IOException {
+        Debug.println("starting scannotation");
+        var start = Instant.now();
         db = new AnnotationDB();
         db.scanArchives(urls);
+        var elapsed = ChronoUnit.NANOS.between(start, Instant.now());
+        Debug.println(String.format("scan finished, %d ns elapsed (%.3f ms)", elapsed, (double)elapsed/1000000.0));
 
         pool = new ClassPool();
-        var cl = new URLClassLoader(urls);
+        cl = new URLClassLoader(urls);
         pool.insertClassPath(new LoaderClassPath(cl));
     }
 

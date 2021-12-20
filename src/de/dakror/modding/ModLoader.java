@@ -2,9 +2,14 @@ package de.dakror.modding;
 
 import java.io.InputStream;
 import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
+import java.lang.reflect.TypeVariable;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
@@ -14,6 +19,7 @@ import de.dakror.modding.javassist.JavassistModLoader;
 import de.dakror.modding.javassist.JavassistStackedModLoader;
 import de.dakror.modding.loader.IModLoader;
 import de.dakror.modding.loader.ModClassLoader;
+import static de.dakror.modding.ModAPI.*;
 
 /**
  * The following description is out-of-date. First, ModLoader isn't itself a ClassLoader, because of
@@ -107,7 +113,7 @@ import de.dakror.modding.loader.ModClassLoader;
  * </pre>
  */
 
-abstract public class ModLoader implements IModLoader {
+abstract public class ModLoader implements IModLoader, ModAPI {
     protected ModClassLoader classLoader;
     // private ClassLoader appLoader;
     // private URL[] cpUrls;
@@ -134,6 +140,10 @@ abstract public class ModLoader implements IModLoader {
 
         implInit();
         return this;
+    }
+
+    public List<URL> getModUrls() {
+        return List.of(modUrls);
     }
 
     abstract protected void implInit();
@@ -214,6 +224,7 @@ abstract public class ModLoader implements IModLoader {
                 debugln("Skipping registration of "+mod.toString()+" (not supported by this ModLoader?): "+e.getMessage());
             }
         }
+        mod.registered(this);
     }
 
     protected void registerClassMod(IClassMod<?,?> mod) {
@@ -273,13 +284,14 @@ abstract public class ModLoader implements IModLoader {
         return stream;
     }
 
-    protected <T, C> T applyMods(List<IClassMod<T, C>> classMods, String name, T classDef, C context)  {
+    protected <T, C> T applyMods(List<IClassMod<T, C>> classMods, String name, T classDef, C context) throws ClassNotFoundException {
         for (var mod: classMods) {
             if (mod.hooksClass(name)) {
                 try {
-                    classDef = mod.redefineClass(name, classDef, context);
-                } catch (ClassNotFoundException e) {
-                    debugln(mod.getClass().getName()+".redefineClass("+name+" threw CNFE, skipping");
+                    var newDef = mod.redefineClass(name, classDef, context);
+                    if (newDef != null) {
+                        classDef = newDef;
+                    }
                 } catch (NullPointerException e) {
                     if (classDef == null) {
                         // this is reasonable, just skip
@@ -313,41 +325,79 @@ abstract public class ModLoader implements IModLoader {
 
     ///////////// INTERFACES ////////////
 
-    private static interface IBaseMod {}
+    public static interface IBaseMod extends ModAPI {
+        default void registered(ModLoader modLoader) { }
+    }
     public static interface IClassMod<T, C> extends IBaseMod {
         boolean hooksClass(String className);
         T redefineClass(String className, T classDef, C context) throws ClassNotFoundException;
-        static boolean accepts(Class<?> modClassType, Class<?> classDefType, Class<?> contextType) {
-            for (var method: modClassType.getMethods()) {
-                if (method.getName() != "redefineClass") continue;
-                if (classDefType != null) {
-                    if (!method.getParameterTypes()[1].isAssignableFrom(classDefType) || !classDefType.isAssignableFrom(method.getReturnType())) {
+        static <MCT, CDT, CT> boolean accepts(Class<MCT> modClassType, Class<CDT> classDefType, Class<CT> contextType, Map<TypeVariable<?>, Type> typeParams) {
+          try (var ctx = DCONTEXT("IClassMod.accepts(%s, %s, %s, %s)", modClassType.getName(), classDefType.getSimpleName(), contextType.getSimpleName(), typeParams)) {
+            if (typeParams == null) {
+                typeParams = Map.of();
+            }
+            DCONTEXT("test", 1);
+            for (Type ifaceType: modClassType.getGenericInterfaces()) {
+                DEBUGLN("iface on %s: %s", modClassType.toGenericString(), ifaceType);
+                if (ifaceType instanceof ParameterizedType) {
+                    var ifacePType = (ParameterizedType) ifaceType;
+                    if (ifacePType.getRawType() != IClassMod.class) {
                         continue;
                     }
-                }
-                if (contextType != null) {
-                    if (!method.getParameterTypes()[2].isAssignableFrom(contextType)) {
-                        continue;
+                    var ifaceTArgs = ifacePType.getActualTypeArguments();
+                    Type ifaceCDT = typeParams.getOrDefault(ifaceTArgs[0], ifaceTArgs[0]);
+                    Type ifaceCT = typeParams.getOrDefault(ifaceTArgs[1], ifaceTArgs[1]);
+                    DEBUGLN("iface %s type args: %s, %s", ifacePType, ifaceCDT, ifaceCT);
+                    if (ifaceCDT == classDefType && ifaceCT == contextType) {
+                        return true;
                     }
                 }
-                return true;
+            }
+            List<Type> superTypes = new ArrayList<>();
+            superTypes.add(modClassType.getGenericSuperclass());
+            superTypes.addAll(Arrays.asList(modClassType.getGenericInterfaces()));
+            for (Type superType: superTypes) {
+                if (superType == null || superType == Object.class) {
+                    continue;
+                }
+                if (superType instanceof Class<?>) {
+                    if (accepts((Class<?>)superType, classDefType, contextType, null)) {
+                        return true;
+                    }
+                } else if (superType instanceof ParameterizedType) {
+                    var superPType = (ParameterizedType) superType;
+                    Class<?> superClass = (Class<?>)superPType.getRawType();
+                    TypeVariable<? extends Class<?>>[] superTVars = superClass.getTypeParameters();
+                    Type[] superTArgs = superPType.getActualTypeArguments();
+                    Map<TypeVariable<?>, Type> superParams = new HashMap<>();
+
+                    assert superTVars.length == superTArgs.length;
+                    for (int i = 0; i < superTVars.length; i++) {
+                        superParams.put(superTVars[i], typeParams.getOrDefault(superTArgs[i], superTArgs[i]));
+                    }
+
+                    if (accepts(superClass, classDefType, contextType, superParams)) {
+                        return true;
+                    }
+                }
             }
             return false;
+          }
         }
         default boolean accepts(Class<?> classDefType, Class<?> contextType) {
-            return accepts(this.getClass(), classDefType, contextType);
+            return accepts(this.getClass(), classDefType, contextType, null);
         }
 
-        @SuppressWarnings("unchecked")
         default <U, D> IClassMod<U, D> asType(Class<U> classDefType, Class<D> contextType) throws ClassCastException {
             if (accepts(classDefType, contextType)) {
-                return (IClassMod<U, D>)this;
+                @SuppressWarnings("unchecked") var modThis = (IClassMod<U, D>)this;
+                return modThis;
             } else {
                 var thisClass = this.getClass();
                 for (var subClass: thisClass.getDeclaredClasses()) {
-                    if (And.class.isAssignableFrom(subClass) && accepts(subClass, classDefType, contextType)) {
+                    if (And.class.isAssignableFrom(subClass) && accepts(subClass, classDefType, contextType, null)) {
                         try {
-                            var subMod = (IClassMod.And<U,D>)subClass.getDeclaredConstructor(thisClass).newInstance(this);
+                            @SuppressWarnings("unchecked") var subMod = (IClassMod.And<U,D>)subClass.getDeclaredConstructor(thisClass).newInstance(this);
                             And.andToBase.put(subMod, this);
                             return subMod;
                         } catch (Exception e) {
@@ -378,109 +428,4 @@ abstract public class ModLoader implements IModLoader {
     static interface IClassAugmentation {
         void augmentClass(String augmentedClass, String augmentationClass);
     }
-
-    /////////////// DEBUG ///////////////
-
-    private static int indent = 0;
-
-    public static void debugln(String msg) {
-        System.out.println(String.format("%s:%"+(indent+1)+"s%s", "ModLoader","",msg));
-    }
-
-    private static void enter(String msg) {
-        debugln("entering "+msg);
-        indent += 2;
-    }
-
-    private static void exit(String msg) {
-        // debugln("exiting "+msg);
-        indent -= 2;
-    }
-
-
-    static class DebugContext implements AutoCloseable {
-        private String msg;
-        public DebugContext(String msg) {
-            enter(msg);
-            this.msg = msg;
-        }
-        @Override
-        public void close() {
-            exit(msg);
-        }
-    }
-
-    /*
-    private class SubLoader extends ClassLoader {
-        private String baseName;
-        private String subName;
-        private Class<?> baseClass;
-        private Class<?> subClass = null;
-        private ProtectionDomain pd = null;
-        public SubLoader(ClassLoader parent, String baseName, String subName, Class<?> baseClass) {
-            super(parent);
-            this.baseName = baseName;
-            this.subName = subName;
-            this.baseClass = baseClass;
-        }
-
-        public void setOriginalSubClass(Class<?> subClass) {
-            pd = subClass.getProtectionDomain();
-        }
-
-        @Override
-        public Class<?> loadClass(String name) throws ClassNotFoundException {
-            if (name.equals(baseName)) {
-                return baseClass;
-            } else if (name.equals(subName)) {
-                if (subClass == null) {
-                    subClass = findClass(name);
-                }
-                return subClass;
-            }
-            return super.loadClass(name);
-        }
-
-        @Override
-        protected Class<?> findClass(String name) throws ClassNotFoundException {
-            if (name.equals(baseName)) {
-                return baseClass;
-            } else if (name.equals(subName)) {                
-                try {
-                    byte[] code = classPool.get(name).toBytecode();
-                    subClass = defineClass(name, code, 0, code.length, pd);
-                    return subClass;
-                } catch (IOException|NotFoundException e) {
-                    debugln("Could not find class "+name);
-                    throw new ClassNotFoundException(e.getMessage());
-                } catch (CannotCompileException e) {
-                    System.err.println("Could not compile class "+name+": "+e.getMessage());
-                }
-            }
-            return super.findClass(name);
-        }
-    }
-
-    private SynthLoader synthLoader = new SynthLoader(this);
-    private static class SynthLoader extends ClassLoader {
-        private Map<String, Class<?>> synthClasses = new HashMap<>();
-        public SynthLoader(ClassLoader parent) {
-            super(parent);
-        }
-        public Class<?> defineSynthClass(String name, byte[] code, ProtectionDomain pd) {
-            var ret = defineClass(name, code, 0, code.length, pd);
-            synthClasses.put(name, ret);
-            return ret;
-        }
-        @Override
-        protected Class<?> findClass(String name) throws ClassNotFoundException {
-            var ret = synthClasses.get(name);
-            if (ret == null) {
-                throw new ClassNotFoundException();
-            }
-            return ret;
-        }
-    }
-    */
-
 }

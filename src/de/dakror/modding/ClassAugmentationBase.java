@@ -8,6 +8,7 @@ import java.util.Map;
 public abstract class ClassAugmentationBase<T, C> implements ModLoader.IClassAugmentation, ModLoader.IClassMod<T, C> {
     // maps all classes in an aug chain to the AugmentationChain object
     protected Map<String, AugmentationChain> augmentationChains = new HashMap<>();
+    protected Map<String, Map<String, String>> affectedClasses = DefaultingHashMap.using(HashMap::new);
 
     public void augmentClass(String baseClass, String augmentationClass) {
         assert baseClass != augmentationClass;
@@ -25,22 +26,26 @@ public abstract class ClassAugmentationBase<T, C> implements ModLoader.IClassAug
 
     @Override
     public boolean hooksClass(String className) {
-        return augmentationChains.containsKey(className);
+        return augmentationChains.containsKey(className) || affectedClasses.containsKey(className);
     }
 
     @Override
-    public T redefineClass(String className, T classDef, C context)
-            throws ClassNotFoundException {
-        try (var ctx = new ModLoader.DebugContext("ClassAugmentation#redefineClass "+className)) {
-            return augmentationChains.get(className).redefineClass(className, classDef, context);
+    public T redefineClass(String className, T classDef, C context) throws ClassNotFoundException {
+        var augChain = augmentationChains.get(className);
+        if (augChain != null) {
+            return augChain.redefineClass(className, classDef, context);
+        } else {
+            return redefineAffectedClass(className, classDef, context, affectedClasses.get(className));
         }
     }
+
+    abstract protected T redefineAffectedClass(String className, T classDef, C context, Map<String, String> renameMap);
 
     abstract protected class AugmentationChain {
         public String baseName;
         public String augmentedName;
         public List<String> augmentations = new ArrayList<>();
-        public boolean compiled = false;
+        protected boolean compiled = false;
 
         protected AugmentationChain(String baseClass) {
             baseName = baseClass;

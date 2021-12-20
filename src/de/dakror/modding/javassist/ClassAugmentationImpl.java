@@ -37,6 +37,11 @@ public class ClassAugmentationImpl extends ClassAugmentationBase<CtClass, ClassP
         return new AugmentationChain(className);
     }
 
+    @Override
+    protected CtClass redefineAffectedClass(String className, CtClass classDef, ClassPool context, Map<String, String> renameMap) {
+        throw new UnsupportedOperationException();
+    }
+
     protected class AugmentationChain extends ClassAugmentationBase<CtClass, ClassPool>.AugmentationChain {
 
         public AugmentationChain(String baseClass) {

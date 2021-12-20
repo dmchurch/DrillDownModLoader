@@ -11,6 +11,7 @@ import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.ClassWriter;
 
+import de.dakror.modding.Debug;
 import de.dakror.modding.ModLoader;
 
 public class ASMModLoader extends ModLoader {
@@ -28,8 +29,13 @@ public class ASMModLoader extends ModLoader {
         } catch (Exception e) {}
         // reset the counting so we only track classes that ASMModLoader can touch
         classLoader.time = classLoader.count = 0;
+        registerMod(new ModScanner());
         registerMod(new ClassReplacementImpl());
-        registerMod(new ClassAugmentationImpl());
+        registerMod(new ClassAugmentationImpl(this));
+    }
+
+    public ModScanner getScanner() {
+        return getMod(ModScanner.class);
     }
 
     @Override
@@ -37,10 +43,12 @@ public class ASMModLoader extends ModLoader {
         var registered = false;
         try {
             registerClassReaderMod(mod.asType(ClassReader.class, ASMModLoader.class));
+            debugln("Registered ClassReader mod "+mod);
             registered = true;
         } catch (ClassCastException e) {}
         try {
             registerClassVisitorMod(mod.asType(ClassVisitor.class, ClassReader.class));
+            debugln("Registered ClassVisitor mod "+mod);
         } catch (ClassCastException e) {
             if (!registered) {
                 throw e;
@@ -56,23 +64,42 @@ public class ASMModLoader extends ModLoader {
     protected void registerClassVisitorMod(IClassMod<ClassVisitor, ClassReader> mod) {
         visitorMods.add(0, mod);
     }
+    
+    @Override
+    public boolean classHooked(String className) {
+        return true;
+    }
 
     @Override
     public byte[] redefineClass(String name) throws ClassNotFoundException {
-        ClassReader cr;
+        ClassReader cr = null;
+        IOException ioExc = null;
         try {
-            cr = applyMods(readerMods, name, newClassReader(name), this);
+            cr = newClassReader(name);
         } catch (IOException e) {
-            throw new ClassNotFoundException(name);
+            ioExc = e;
+        }
+        try {
+            cr = applyMods(readerMods, name, cr, this);
+        } catch (RuntimeException e) {
+            if (ioExc != null) {
+                throw new ClassNotFoundException(name, ioExc);
+            }
+            throw e;
         }
         ClassWriter cw = new ClassWriter(cr, 0);
-        ClassVisitor cv = applyMods(visitorMods, name, cw, cr);
+        ClassVisitor cv = cw;
+        cv = applyMods(visitorMods, name, cv, cr);
         cr.accept(cv, 0);
         return cw.toByteArray();
     }
 
     public ClassReader newClassReader(String name) throws IOException {
-        try (var inputStream = classLoader.getResourceAsStream(name.replace('.', '/')+".class")) {
+        return newIntClassReader(Util.toIntName(name));
+    }
+
+    public ClassReader newIntClassReader(String intName) throws IOException {
+        try (var inputStream = classLoader.getResourceAsStream(intName+".class")) {
             var reader = new ClassReader(inputStream);
             readerToLoader.put(reader, this);
             return reader;
