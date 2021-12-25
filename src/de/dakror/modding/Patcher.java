@@ -53,6 +53,18 @@ public class Patcher {
         }
     }
 
+    @Retention(RetentionPolicy.RUNTIME)
+    @Target({ElementType.TYPE})
+    public static @interface ExtraProperties {
+        String file();
+    }
+
+    @Retention(RetentionPolicy.RUNTIME)
+    @Target({ElementType.TYPE})
+    public static @interface XMLEditor {
+        String file();
+    }
+
     private AnnotationDB db;
     private ClassPool pool;
     private ClassLoader cl;
@@ -100,6 +112,30 @@ public class Patcher {
             } catch (NotFoundException e) {
                 System.err.println("could not find class "+name+" for augment: "+e.getMessage());
                 continue;
+            }
+        }
+    }
+
+    public void patchResources(ModLoader loader) {
+        var propsClasses = db.getAnnotationIndex().get(ExtraProperties.class.getName());
+        for (var name: propsClasses) {
+            try {
+                var pclass = loader.classLoader.loadClass(name);
+                var rname = pclass.getAnnotation(ExtraProperties.class).file();
+                loader.getMod(PropertyListEditor.class).setPropertiesFromClass(rname, pclass);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        var xmlClasses = db.getAnnotationIndex().get(XMLEditor.class.getName());
+        for (var name: xmlClasses) {
+            try {
+                var xclass = loader.classLoader.loadClass(name);
+                var rname = xclass.getAnnotation(XMLEditor.class).file();
+                loader.getMod(XMLResourceEditor.class).addEditor(rname, (XMLResourceEditor.Editor)xclass.getConstructor().newInstance());
+            } catch (Exception e) {
+                throw new RuntimeException(e);
             }
         }
     }

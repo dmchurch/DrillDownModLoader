@@ -106,7 +106,9 @@ public class ModClassLoader extends URLClassLoader {
             }
             ProtectionDomain pd = packageDomains.get(getPackageName(name));
             if (pd == null) {
-                pd = recordPD(appLoader.loadClass(name)).getProtectionDomain();
+                try {
+                    pd = recordPD(appLoader.loadClass(name)).getProtectionDomain();
+                } catch (ClassNotFoundException e) {}
             }
             return loadedClass = defineClass(name, code, 0, code.length, pd);
         } catch (Exception e) {

@@ -138,6 +138,8 @@ abstract public class ModLoader implements IModLoader, ModAPI {
         this.modUrls = modUrls;
 
         implInit();
+        registerMod(new PropertyListEditor());
+        registerMod(new XMLResourceEditor());
         return this;
     }
 
@@ -312,6 +314,8 @@ abstract public class ModLoader implements IModLoader, ModAPI {
         var patcher = new Patcher(modUrls);
         debugln("patching classes");
         patcher.patchClasses(this);
+        debugln("patching resources");
+        patcher.patchResources(this);
         // classMods.add(new Patcher(modUrls));
         // classMods.add(new LauncherMod());
         debugln("patching enums");

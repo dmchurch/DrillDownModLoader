@@ -94,11 +94,6 @@ public class ASMModLoader extends ModLoader {
     }
     
     @Override
-    public boolean classHooked(String className) {
-        return true;
-    }
-
-    @Override
     public byte[] redefineClass(String name) throws ClassNotFoundException {
         byte[] code = definedClasses.remove(name);
         if (code != null) {
