@@ -11,10 +11,10 @@ public interface ModAPI {
         return new Debug(1);
     }
     default Debug dcontext(String msg) {
-        return new Debug(msg);
+        return new Debug(msg, 1);
     }
     default Debug dcontext(String format, Object... args) {
-        return new Debug(String.format(format, args));
+        return new Debug(String.format(format, args), 1);
     }
 
     // static versions of the above, for ease of use in static contexts
@@ -28,20 +28,27 @@ public interface ModAPI {
         return new Debug(1);
     }
     static Debug DCONTEXT(String msg) {
-        return new Debug(msg);
+        return new Debug(msg, 1);
     }
     static Debug DCONTEXT(String format, Object... args) {
-        return new Debug(String.format(format, args));
+        return new Debug(String.format(format, args), 1);
     }
     public static class Debug extends de.dakror.modding.Debug {
+
         public Debug() {
-            this(1);
+            super(1);
         }
+
+        public Debug(int stackOffset) {
+            super(stackOffset+1);
+        }
+
         public Debug(String msg) {
-            super(msg);
+            super(msg, 1);
         }
-        public Debug(int offset) {
-            super(getCaller(offset+1).getMethodName());
+
+        public Debug(String msg, int stackOffset) {
+            super(msg, stackOffset+1);
         }
     }
 }

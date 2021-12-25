@@ -19,7 +19,6 @@ import de.dakror.modding.javassist.JavassistModLoader;
 import de.dakror.modding.javassist.JavassistStackedModLoader;
 import de.dakror.modding.loader.IModLoader;
 import de.dakror.modding.loader.ModClassLoader;
-import static de.dakror.modding.ModAPI.*;
 
 /**
  * The following description is out-of-date. First, ModLoader isn't itself a ClassLoader, because of
@@ -332,13 +331,12 @@ abstract public class ModLoader implements IModLoader, ModAPI {
         boolean hooksClass(String className);
         T redefineClass(String className, T classDef, C context) throws ClassNotFoundException;
         static <MCT, CDT, CT> boolean accepts(Class<MCT> modClassType, Class<CDT> classDefType, Class<CT> contextType, Map<TypeVariable<?>, Type> typeParams) {
-          try (var ctx = DCONTEXT("IClassMod.accepts(%s, %s, %s, %s)", modClassType.getName(), classDefType.getSimpleName(), contextType.getSimpleName(), typeParams)) {
+        //   try (var ctx = DCONTEXT("IClassMod.accepts(%s, %s, %s, %s)", modClassType.getName(), classDefType.getSimpleName(), contextType.getSimpleName(), typeParams)) {
             if (typeParams == null) {
                 typeParams = Map.of();
             }
-            DCONTEXT("test", 1);
             for (Type ifaceType: modClassType.getGenericInterfaces()) {
-                DEBUGLN("iface on %s: %s", modClassType.toGenericString(), ifaceType);
+                // DEBUGLN("iface on %s: %s", modClassType.toGenericString(), ifaceType);
                 if (ifaceType instanceof ParameterizedType) {
                     var ifacePType = (ParameterizedType) ifaceType;
                     if (ifacePType.getRawType() != IClassMod.class) {
@@ -347,7 +345,7 @@ abstract public class ModLoader implements IModLoader, ModAPI {
                     var ifaceTArgs = ifacePType.getActualTypeArguments();
                     Type ifaceCDT = typeParams.getOrDefault(ifaceTArgs[0], ifaceTArgs[0]);
                     Type ifaceCT = typeParams.getOrDefault(ifaceTArgs[1], ifaceTArgs[1]);
-                    DEBUGLN("iface %s type args: %s, %s", ifacePType, ifaceCDT, ifaceCT);
+                    // DEBUGLN("iface %s type args: %s, %s", ifacePType, ifaceCDT, ifaceCT);
                     if (ifaceCDT == classDefType && ifaceCT == contextType) {
                         return true;
                     }
@@ -382,7 +380,7 @@ abstract public class ModLoader implements IModLoader, ModAPI {
                 }
             }
             return false;
-          }
+        //   }
         }
         default boolean accepts(Class<?> classDefType, Class<?> contextType) {
             return accepts(this.getClass(), classDefType, contextType, null);

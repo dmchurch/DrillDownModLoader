@@ -2,6 +2,7 @@ package de.dakror.modding;
 
 import java.io.IOException;
 import java.lang.annotation.ElementType;
+import java.lang.annotation.Repeatable;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
@@ -37,6 +38,19 @@ public class Patcher {
     @Retention(RetentionPolicy.RUNTIME)
     @Target({ElementType.TYPE})
     public static @interface AugmentationClass {
+        @Repeatable(MultiPreInit.class)
+        @Retention(RetentionPolicy.RUNTIME)
+        @Target({ElementType.CONSTRUCTOR, ElementType.METHOD})
+        public static @interface PreInit {
+            /** The name of the method to execute prior to <init> */
+            String value() default "";
+        }
+
+        @Retention(RetentionPolicy.RUNTIME)
+        @Target({ElementType.CONSTRUCTOR})
+        public static @interface MultiPreInit {
+            PreInit[] value();
+        }
     }
 
     private AnnotationDB db;

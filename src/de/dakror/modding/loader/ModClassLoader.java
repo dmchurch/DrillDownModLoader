@@ -1,7 +1,5 @@
 package de.dakror.modding.loader;
 
-import java.applet.Applet;
-
 // there must be NO imports in here outside the java.* namespace
 
 import java.io.File;

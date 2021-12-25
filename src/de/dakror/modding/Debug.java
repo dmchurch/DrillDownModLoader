@@ -13,7 +13,7 @@ public class Debug implements AutoCloseable {
     }
 
     protected static void println(String msg, int stackOffset) {
-        println(msg, getCaller(stackOffset).getClassName().replaceAll(".*\\.", "").replace('$','.'));
+        println(msg, getCaller(stackOffset).getClassName().replaceAll(".*\\.", "").replaceAll(".*-(\\w+)>","$1.").replace('$','.'));
     }
 
     public static void formatln(String format, Object... args) {
@@ -21,16 +21,22 @@ public class Debug implements AutoCloseable {
     }
 
     public static void enter() {
-        enter(getCaller().getMethodName());
+        enter(1);
+    }
+    public static void enter(int stackOffset) {
+        enter(getCaller(stackOffset).getMethodName(), stackOffset + 1);
     }
 
     public static void enter(String msg) {
-        println("entering "+msg);
+        enter(msg, 1);
+    }
+    public static void enter(String msg, int stackOffset) {
+        println("entering "+msg, stackOffset + 1);
         Debug.indent += 2;
     }
 
     public static void exit(String msg) {
-        // debugln("exiting "+msg);
+        // println("exiting "+msg);
         Debug.indent -= 2;
     }
     protected static int indent = 1;
@@ -46,10 +52,16 @@ public class Debug implements AutoCloseable {
     // AutoCloseable implementation, for try (new Debug(msg)) { code... }    
     private String msg;
     public Debug() {
-        Debug.enter(getCaller().getMethodName());
+        this(1);
+    }
+    public Debug(int stackOffset) {
+        Debug.enter(getCaller(stackOffset).getMethodName());
     }
     public Debug(String msg) {
-        Debug.enter(msg);
+        this(msg, 1);
+    }
+    public Debug(String msg, int stackOffset) {
+        Debug.enter(msg, stackOffset + 1);
         this.msg = msg;
     }
     @Override

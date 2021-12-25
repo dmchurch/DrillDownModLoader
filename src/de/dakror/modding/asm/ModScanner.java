@@ -34,6 +34,7 @@ public class ModScanner implements ModLoader.IBaseMod, Opcodes {
     // /** The tag value of CONSTANT_InterfaceMethodref_info JVMS structures. */
     // static final int CONSTANT_INTERFACE_METHODREF_TAG = 11;
 
+    protected Map<String, Integer> classVersions = new HashMap<>();
     protected Map<String, List<String>> interfacesByClass = new HashMap<>();
     protected Map<String, List<String>> classesByReference = DefaultingHashMap.using(ArrayList::new);
     protected Map<String, List<String>> classesByAnnotation = DefaultingHashMap.using(ArrayList::new);
@@ -67,6 +68,10 @@ public class ModScanner implements ModLoader.IBaseMod, Opcodes {
         declaredMethods.get(DefaultingHashMap.FREEZE);
     }
 
+    public int getClassVersion(String className) {
+        return getIntClassVersion(Util.toIntName(className));
+    }
+
     public String[] getReferencingClasses(String referencedClass) {
         return getIntReferencingClasses(Util.toIntName(referencedClass))
             .stream()
@@ -92,6 +97,10 @@ public class ModScanner implements ModLoader.IBaseMod, Opcodes {
         return getIntDeclaredMethods(Util.toIntName(className));
     }
 
+    public int getIntClassVersion(String classIntName) {
+        return classVersions.getOrDefault(classIntName, -1);
+    }
+
     public List<String> getIntReferencingClasses(String referencedIntClass) {
         return classesByReference.getOrDefault(referencedIntClass, List.of());
     }
@@ -105,11 +114,11 @@ public class ModScanner implements ModLoader.IBaseMod, Opcodes {
     }
 
     public Map<String, MemberInfo> getIntDeclaredFields(String classIntName) {
-        return declaredFields.get(classIntName);
+        return declaredFields.getOrDefault(classIntName, Map.of());
     }
 
     public Map<String, List<MemberInfo>> getIntDeclaredMethods(String classIntName) {
-        return declaredMethods.get(classIntName);
+        return declaredMethods.getOrDefault(classIntName, Map.of());
     }
 
     protected void scanDirectory(File dirFile) throws Exception {
@@ -140,33 +149,22 @@ public class ModScanner implements ModLoader.IBaseMod, Opcodes {
         var count = cr. getItemCount();
         var cbuf = new char[cr.getMaxStringLength()];
         for (var i = 2; i < count; i++) {
-            int cpOff, ntOff, tag;
-            String cname, name;
+            int cpOff;
+            String cname;
             cpOff = cr.getItem(i);
-            switch (tag = cr.readByte(cpOff - 1)) {
+            switch (cr.readByte(cpOff - 1)) {
             case CONSTANT_CLASS_TAG:
                 cname = cr.readUTF8(cpOff, cbuf);
                 if (cname.startsWith("java/")) continue;
                 classesByReference.get(cname).add(myname);
                 break;
-            // case CONSTANT_FIELDREF_TAG:
-            // case CONSTANT_METHODREF_TAG:
-            // case CONSTANT_INTERFACE_METHODREF_TAG:
-            //     cname = cr.readClass(cpOff, cbuf);
-            //     if (cname.startsWith("java/")) continue;
-            //     ntOff = cr.getItem(cr.readShort(cpOff + 2));
-            //     name = cr.readUTF8(ntOff, cbuf);
-            //     if (tag != CONSTANT_FIELDREF_TAG) {
-            //         name += "()";
-            //     }
-            //     knownMembers.get(cname).add(name);
-            //     break;
             }
         }
         var fields = declaredFields.get(myname);
         var methods = declaredMethods.get(myname);
         cr.accept(new ClassVisitor(ASM9) {
             public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+                classVersions.put(myname, version);
                 interfacesByClass.put(myname, Arrays.asList(interfaces));
             }
             public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
@@ -184,21 +182,5 @@ public class ModScanner implements ModLoader.IBaseMod, Opcodes {
         }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
         methods.get(DefaultingHashMap.FREEZE);
         inputStream.close();
-    }
-
-    public static class MemberInfo {
-        public final String name;
-        public final String descriptor;
-        public final int access;
-        public MemberInfo(String name, String descriptor, int access) {
-            this.name = name;
-            this.descriptor = descriptor;
-            this.access = access;
-        }
-
-        @Override
-        public String toString() {
-            return super.toString() + " ["+name+descriptor+"/"+access+"]";
-        }
     }
 }
