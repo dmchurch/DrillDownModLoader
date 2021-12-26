@@ -62,6 +62,7 @@ public class ASMModLoader extends ModLoader {
         registerMod(new ClassAugmentationImpl(this));
     }
 
+    @Override
     public ModScanner getScanner() {
         return getMod(ModScanner.class);
     }

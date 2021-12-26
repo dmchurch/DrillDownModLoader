@@ -19,6 +19,7 @@ public class JavassistModLoader extends ModLoader {
         classPool = new ClassPool();
         classPool.insertClassPath(new LoaderClassPath(classLoader));
 
+        registerMod(new ModScannotation());
         registerMod(new ClassReplacementImpl());
         registerMod(new ClassAugmentationImpl());
     }

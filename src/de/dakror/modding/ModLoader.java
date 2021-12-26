@@ -214,6 +214,11 @@ abstract public class ModLoader implements IModLoader, ModAPI {
     }
 
     public void registerMod(IBaseMod mod) {
+        try {
+            mod.registered(this);
+        } catch (Exception e) {
+            debugln("Mod %s threw exception during registration, ignoring: %s", mod, e);
+        }
         mods.add(mod);
         if (mod instanceof IResourceMod) {
             resourceMods.add((IResourceMod)mod);
@@ -225,7 +230,6 @@ abstract public class ModLoader implements IModLoader, ModAPI {
                 debugln("Skipping registration of "+mod.toString()+" (not supported by this ModLoader?): "+e.getMessage());
             }
         }
-        mod.registered(this);
     }
 
     protected void registerClassMod(IClassMod<?,?> mod) {
@@ -252,6 +256,10 @@ abstract public class ModLoader implements IModLoader, ModAPI {
             }
         }
         return null;
+    }
+
+    public IModScanner getScanner() {
+        return getMod(IModScanner.class);
     }
 
     public boolean resourceHooked(String name) {
@@ -311,15 +319,13 @@ abstract public class ModLoader implements IModLoader, ModAPI {
     abstract public byte[] redefineClass(String name) throws ClassNotFoundException;
 
     public void start(String mainClass, String[] args) throws Exception {
-        var patcher = new Patcher(modUrls);
+        var patcher = new Patcher(this);
         debugln("patching classes");
-        patcher.patchClasses(this);
+        patcher.patchClasses();
         debugln("patching resources");
-        patcher.patchResources(this);
-        // classMods.add(new Patcher(modUrls));
-        // classMods.add(new LauncherMod());
+        patcher.patchResources();
         debugln("patching enums");
-        Patcher.patchEnums(modUrls);
+        Patcher.patchEnums();
         debugln("loading main class");
         var cls = classLoader.loadClass(mainClass);
         debugln("calling main()");
@@ -329,7 +335,7 @@ abstract public class ModLoader implements IModLoader, ModAPI {
     ///////////// INTERFACES ////////////
 
     public static interface IBaseMod extends ModAPI {
-        default void registered(ModLoader modLoader) { }
+        default void registered(ModLoader modLoader) throws Exception { }
     }
     public static interface IClassMod<T, C> extends IBaseMod {
         boolean hooksClass(String className);

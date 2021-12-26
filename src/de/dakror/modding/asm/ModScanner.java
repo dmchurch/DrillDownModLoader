@@ -10,6 +10,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
@@ -19,27 +20,23 @@ import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.FieldVisitor;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.Type;
 
 import de.dakror.modding.DefaultingHashMap;
+import de.dakror.modding.IModScanner;
+import de.dakror.modding.MemberInfo;
 import de.dakror.modding.ModLoader;
 
-public class ModScanner implements ModLoader.IBaseMod, Opcodes {
+public class ModScanner implements IModScanner, Opcodes {
     // constant values from org.objectweb.asm.Symbol, which is not public because...?
     /** The tag value of CONSTANT_Class_info JVMS structures. */
     static final int CONSTANT_CLASS_TAG = 7;
-    // /** The tag value of CONSTANT_Fieldref_info JVMS structures. */
-    // static final int CONSTANT_FIELDREF_TAG = 9;
-    // /** The tag value of CONSTANT_Methodref_info JVMS structures. */
-    // static final int CONSTANT_METHODREF_TAG = 10;
-    // /** The tag value of CONSTANT_InterfaceMethodref_info JVMS structures. */
-    // static final int CONSTANT_INTERFACE_METHODREF_TAG = 11;
 
-    protected Map<String, Integer> classVersions = new HashMap<>();
-    protected Map<String, List<String>> interfacesByClass = new HashMap<>();
     protected Map<String, List<String>> classesByReference = DefaultingHashMap.using(ArrayList::new);
     protected Map<String, List<String>> classesByAnnotation = DefaultingHashMap.using(ArrayList::new);
-    protected Map<String, Map<String,MemberInfo>> declaredFields = DefaultingHashMap.using(HashMap::new);
-    protected Map<String, Map<String,List<MemberInfo>>> declaredMethods = DefaultingHashMap.using(() -> DefaultingHashMap.using(ArrayList::new));
+    protected Map<String, ClassInfo> scannedClasses = new HashMap<>() {
+        public ClassInfo get(Object key) { return super.getOrDefault(key, ClassInfo.EMPTY); }
+    };
 
     @Override
     public void registered(ModLoader modLoader) {
@@ -60,12 +57,23 @@ public class ModScanner implements ModLoader.IBaseMod, Opcodes {
         }
         var elapsed = ChronoUnit.NANOS.between(start, Instant.now());
         debugln("scan finished, %d ns elapsed (%.3f ms)", elapsed, (double)elapsed/1000000.0);
-        // freeze the DefaultingHashMaps
 
-        classesByReference.get(DefaultingHashMap.FREEZE);
+        // freeze the DefaultingHashMaps
         classesByAnnotation.get(DefaultingHashMap.FREEZE);
-        declaredFields.get(DefaultingHashMap.FREEZE);
-        declaredMethods.get(DefaultingHashMap.FREEZE);
+        classesByReference.get(DefaultingHashMap.FREEZE);
+    }
+
+    // IModScanner external-name access functions
+
+    @Override
+    public IAnnotation<?> getClassAnnotation(String className, String annotationClass) {
+        final var anno = scannedClasses.get(className).annotations.get(annotationClass);
+        return new IAnnotation<>() {
+            @Override
+            public String getStringValue(String memberName) {
+                return anno.get(memberName);
+            }
+        };
     }
 
     public int getClassVersion(String className) {
@@ -84,6 +92,10 @@ public class ModScanner implements ModLoader.IBaseMod, Opcodes {
             .map(Util::fromIntName)
             .toArray(String[]::new);
     }
+    @Override
+    public String getDeclaredSuperclass(String declaringClass) {
+        return Util.fromIntName(getIntDeclaredSuperclass(Util.toIntName(declaringClass)));
+    }
     public String[] getDeclaredInterfaces(String declaringClass) {
         return getIntDeclaredInterfaces(Util.toIntName(declaringClass))
             .stream()
@@ -97,8 +109,10 @@ public class ModScanner implements ModLoader.IBaseMod, Opcodes {
         return getIntDeclaredMethods(Util.toIntName(className));
     }
 
+    // Internal-name access functions variants
+
     public int getIntClassVersion(String classIntName) {
-        return classVersions.getOrDefault(classIntName, -1);
+        return scannedClasses.get(classIntName).version;
     }
 
     public List<String> getIntReferencingClasses(String referencedIntClass) {
@@ -109,16 +123,20 @@ public class ModScanner implements ModLoader.IBaseMod, Opcodes {
         return classesByAnnotation.getOrDefault(annotationIntClass, List.of());
     }
 
+    public String getIntDeclaredSuperclass(String declaringIntClass) {
+        return scannedClasses.get(declaringIntClass).superclass;
+    }
+
     public List<String> getIntDeclaredInterfaces(String declaringIntClass) {
-        return interfacesByClass.getOrDefault(declaringIntClass, List.of());
+        return scannedClasses.get(declaringIntClass).interfaces;
     }
 
     public Map<String, MemberInfo> getIntDeclaredFields(String classIntName) {
-        return declaredFields.getOrDefault(classIntName, Map.of());
+        return scannedClasses.get(classIntName).fields;
     }
 
     public Map<String, List<MemberInfo>> getIntDeclaredMethods(String classIntName) {
-        return declaredMethods.getOrDefault(classIntName, Map.of());
+        return scannedClasses.get(classIntName).methods;
     }
 
     protected void scanDirectory(File dirFile) throws Exception {
@@ -160,27 +178,95 @@ public class ModScanner implements ModLoader.IBaseMod, Opcodes {
                 break;
             }
         }
-        var fields = declaredFields.get(myname);
-        var methods = declaredMethods.get(myname);
-        cr.accept(new ClassVisitor(ASM9) {
-            public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
-                classVersions.put(myname, version);
-                interfacesByClass.put(myname, Arrays.asList(interfaces));
-            }
-            public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
-                classesByAnnotation.get(descriptor).add(myname);
-                return null;
-            };
-            public FieldVisitor visitField(int access, String name, String descriptor, String signature, Object value) {
-                fields.put(name, new MemberInfo(name, descriptor, access));
-                return null;
-            }
-            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
-                methods.get(name).add(new MemberInfo(name, descriptor, access));
-                return null;
-            }
-        }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-        methods.get(DefaultingHashMap.FREEZE);
+
+        var scanner = new ClassInfoScanner(this);
+        cr.accept(scanner, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        scannedClasses.put(myname, scanner.getClassInfo());
         inputStream.close();
     }
+
+    private static class ClassInfo {
+        public static final ClassInfo EMPTY = new ClassInfo(-1, 0, null, null, List.of(), Map.of(), Map.of(), Map.of());
+
+        public final int version;
+        public final int access;
+        public final String name;
+        public final String superclass;
+        public final List<String> interfaces;
+        public final Map<String, Map<String, String>> annotations;
+        public final Map<String, MemberInfo> fields;
+        public final Map<String, List<MemberInfo>> methods;
+
+        public ClassInfo(int version, int access, String name, String superclass, String[] interfaces) {
+            this(version, access, name, superclass, List.of(interfaces),
+                /* annotations = */ DefaultingHashMap.using(HashMap::new),
+                /* fields = */ new HashMap<>(),
+                /* methods = */ DefaultingHashMap.using(ArrayList::new));
+        }
+        public ClassInfo(ClassInfo info) {
+            this(info.version, info.access, info.name, info.superclass, List.copyOf(info.interfaces),
+                deepCopy(info.annotations, Map::copyOf),
+                Map.copyOf(info.fields),
+                deepCopy(info.methods, List::copyOf));
+        }
+        private ClassInfo(int version, int access, String name, String superclass, List<String> interfaces,
+                Map<String, Map<String, String>> annotations,
+                Map<String, MemberInfo> fields,
+                Map<String, List<MemberInfo>> methods) {
+            this.version = version;
+            this.access = access;
+            this.name = name;
+            this.superclass = superclass;
+            this.interfaces = interfaces;
+            this.annotations = annotations;
+            this.fields = fields;
+            this.methods = methods;
+        }
+
+        @SuppressWarnings("unchecked")
+        private static <K, V> Map<K, V> deepCopy(Map<K, V> map, Function<V, V> copyValue) {
+            return Map.ofEntries(map.entrySet()
+                                    .stream()
+                                    .map(e -> Map.entry(e.getKey(), copyValue.apply(e.getValue())))
+                                    .toArray(Map.Entry[]::new)
+                                );
+        }
+    }
+    private class ClassInfoScanner extends ClassVisitor {
+        private ClassInfo classInfo;
+        public ClassInfoScanner(ModScanner modScanner) {
+            super(ASM9);
+        }
+        public ClassInfo getClassInfo() {
+            return new ClassInfo(classInfo);
+        }
+        public void visit(int version, int access, String name, String signature, String superName, String[] interfaces) {
+            classInfo = new ClassInfo(version, access, name, superName, interfaces);
+        }
+        public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
+            ModScanner.this.classesByAnnotation.get(Type.getType(descriptor).getInternalName()).add(classInfo.name);
+            if (visible) {
+                final var annoMembers = classInfo.annotations.get(descriptor);
+                return new AnnotationVisitor(ASM9) {
+                    public void visit(String name, Object value) {
+                        if (value instanceof Type) {
+                            annoMembers.put(name, ((Type)value).getClassName());
+                        } else {
+                            annoMembers.put(name, value == null ? null : value.toString());
+                        }
+                    }
+                };
+            }
+            return null;
+        };
+        public FieldVisitor visitField(int access, String name, String descriptor, String signature, Object value) {
+            classInfo.fields.put(name, new MemberInfo(name, descriptor, access));
+            return null;
+        }
+        public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+            classInfo.methods.get(name).add(new MemberInfo(name, descriptor, access));
+            return null;
+        }
+    }
+
 }

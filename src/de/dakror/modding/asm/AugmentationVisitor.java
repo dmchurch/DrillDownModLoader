@@ -23,6 +23,7 @@ import org.objectweb.asm.commons.InstructionAdapter;
 import org.objectweb.asm.commons.Method;
 import org.objectweb.asm.commons.Remapper;
 
+import de.dakror.modding.MemberInfo;
 import de.dakror.modding.Patcher.AugmentationClass;
 import de.dakror.modding.asm.ClassAugmentationImpl.AugmentationChain;
 

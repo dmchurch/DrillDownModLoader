@@ -1,4 +1,4 @@
-package de.dakror.modding.asm;
+package de.dakror.modding;
 
 import java.util.Objects;
 

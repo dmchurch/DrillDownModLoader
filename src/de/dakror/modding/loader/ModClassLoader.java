@@ -89,6 +89,18 @@ public class ModClassLoader extends URLClassLoader {
     public long time=0;
     public int count=0;
 
+    public Class<?> getClassIfLoaded(String name) {
+        var ret = this.findLoadedClass(name);
+        if (ret != null) {
+            return ret;
+        }
+        // we can try getting anything from our parent loaders
+        try {
+            return ModClassLoader.class.getClassLoader().loadClass(name);
+        } catch (ClassNotFoundException e) {}
+        return null;
+    }
+
     // findClass is only called the first time we look for a class, and ONLY if the system
     // classloader couldn't find it (so it won't be called for java.* classes, etc).
     @Override
