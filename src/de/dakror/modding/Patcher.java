@@ -20,12 +20,18 @@ public class Patcher {
     @Retention(RetentionPolicy.RUNTIME)
     @Target({ElementType.TYPE})
     public static @interface AugmentationClass {
+        public static final class SUPERCLASS {}
+        public static final String SUPERCLASS = AugmentationClass.SUPERCLASS.class.getName();
+
+        Class<?> augments() default SUPERCLASS.class;
+
         @Repeatable(MultiPreInit.class)
         @Retention(RetentionPolicy.RUNTIME)
         @Target({ElementType.CONSTRUCTOR, ElementType.METHOD})
         public static @interface PreInit {
             /** The name of the method to execute prior to <init> */
             String value() default "";
+            Class<?> inClass() default SUPERCLASS.class;
         }
 
         @Retention(RetentionPolicy.RUNTIME)
@@ -33,6 +39,12 @@ public class Patcher {
         public static @interface MultiPreInit {
             PreInit[] value();
         }
+    }
+
+    @Retention(RetentionPolicy.RUNTIME)
+    @Target({ElementType.TYPE})
+    public static @interface EnumExtensionClass {
+        Class<?> extendsEnum();
     }
 
     @Retention(RetentionPolicy.RUNTIME)
@@ -55,18 +67,18 @@ public class Patcher {
 
     public void patchClasses() {
         var scanner = loader.getScanner();
-        var replacementClasses = scanner.getAnnotatedClasses(ReplacementClass.class);
-        if (replacementClasses != null)
-        for (var name: replacementClasses) {
+        for (var name: scanner.getAnnotatedClasses(ReplacementClass.class)) {
             var anno = scanner.getClassAnnotation(name, ReplacementClass.class);
             var replClassName = anno.getStringValue("replaces");
             loader.replaceClass(replClassName, name);
         }
 
-        var augmentationClasses = scanner.getAnnotatedClasses(AugmentationClass.class);
-        if (augmentationClasses != null)
-        for (var name: augmentationClasses) {
-            var baseClass = scanner.getDeclaredSuperclass(name);
+        for (var name: scanner.getAnnotatedClasses(AugmentationClass.class)) {
+            var anno = scanner.getClassAnnotation(name, AugmentationClass.class);
+            var baseClass = anno.getStringValue("augments");
+            if (baseClass == null || baseClass.equals(AugmentationClass.SUPERCLASS)) {
+                baseClass = scanner.getDeclaredSuperclass(name);
+            }
             loader.augmentClass(baseClass, name);
         }
     }

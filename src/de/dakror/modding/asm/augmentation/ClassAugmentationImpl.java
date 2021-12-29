@@ -1,4 +1,4 @@
-package de.dakror.modding.asm;
+package de.dakror.modding.asm.augmentation;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -9,10 +9,13 @@ import java.util.Map;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.Type;
 import org.objectweb.asm.commons.ClassRemapper;
 import org.objectweb.asm.commons.SimpleRemapper;
 
 import de.dakror.modding.ClassAugmentationBase;
+import de.dakror.modding.asm.ASMModLoader;
+import de.dakror.modding.asm.Util;
 
 public class ClassAugmentationImpl extends ClassAugmentationBase<ClassVisitor, ClassReader> {
     protected ASMModLoader modLoader;
@@ -30,14 +33,16 @@ public class ClassAugmentationImpl extends ClassAugmentationBase<ClassVisitor, C
         return new ClassRemapper(classDef, new SimpleRemapper(renameMap));
     }
 
-    protected class AugmentationChain extends ClassAugmentationBase<ClassVisitor, ClassReader>.AugmentationChain {
-        protected String baseIntName;
-        protected Map<String, String> innerClassRemaps = new HashMap<>();
-        protected List<String> extraNestMembers = new ArrayList<>();
+    public class AugmentationChain extends ClassAugmentationBase<ClassVisitor, ClassReader>.AugmentationChain {
+        public final String baseIntName;
+        public final Type baseType;
+        protected final Map<String, String> innerClassRemaps = new HashMap<>();
+        protected final List<String> extraNestMembers = new ArrayList<>();
 
         public AugmentationChain(String baseClass) {
             super(baseClass);
-            baseIntName = baseName.replace('.', '/');
+            baseIntName = Util.toIntName(baseName);
+            baseType = Type.getObjectType(baseIntName);
         }
 
         @Override
@@ -47,8 +52,12 @@ public class ClassAugmentationImpl extends ClassAugmentationBase<ClassVisitor, C
             }
             try {
                 var scanner = modLoader.getScanner();
-                var augIntName = augmentation.replace('.','/');
+                var augIntName = Util.toIntName(augmentation);
+                var declaredSuperclass = scanner.getIntDeclaredSuperclass(augIntName);
                 innerClassRemaps.put(augIntName, baseIntName);
+                if (!declaredSuperclass.equals(baseIntName) && !declaredSuperclass.startsWith("java/")) {
+                    innerClassRemaps.put(declaredSuperclass, baseIntName);
+                }
                 recordInnerClasses(augIntName, baseIntName+"$"+mappedClassName(augIntName)+">");
                 for (var remappedClass: innerClassRemaps.keySet()) {
                     for (var affectedClass: scanner.getIntReferencingClasses(remappedClass)) {
@@ -127,11 +136,7 @@ public class ClassAugmentationImpl extends ClassAugmentationBase<ClassVisitor, C
                 throw new ClassNotFoundException(className);
             }
             compiled = true; // don't allow any more augmentations after redefinition
-            try {
-                return new AugmentationVisitor(this, nextVisitor, reader, remaps, remapper);
-            } catch (IOException e) {
-                throw new ClassNotFoundException(className, e);
-            }
+            return AugmentationVisitor.create(this, nextVisitor, reader, remaps, remapper);
         }
     }
 }

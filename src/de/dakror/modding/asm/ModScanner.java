@@ -6,13 +6,14 @@ import java.io.InputStream;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
+import java.util.stream.Collectors;
 
 import org.objectweb.asm.AnnotationVisitor;
 import org.objectweb.asm.ClassReader;
@@ -67,13 +68,7 @@ public class ModScanner implements IModScanner, Opcodes {
 
     @Override
     public IAnnotation<?> getClassAnnotation(String className, String annotationClass) {
-        final var anno = scannedClasses.get(className).annotations.get(annotationClass);
-        return new IAnnotation<>() {
-            @Override
-            public String getStringValue(String memberName) {
-                return anno.get(memberName);
-            }
-        };
+        return getIntClassAnnotation(Util.toIntName(className), Util.toIntName(annotationClass));
     }
 
     public int getClassVersion(String className) {
@@ -137,6 +132,27 @@ public class ModScanner implements IModScanner, Opcodes {
 
     public Map<String, List<MemberInfo>> getIntDeclaredMethods(String classIntName) {
         return scannedClasses.get(classIntName).methods;
+    }
+
+    public Collection<MemberInfo> collectDeclaredFields(String classIntName) {
+        return getIntDeclaredFields(classIntName).values();
+    }
+
+    public Collection<MemberInfo> collectDeclaredMethods(String classIntName) {
+        return getIntDeclaredMethods(classIntName).values()
+                                                  .stream()
+                                                  .flatMap(List::stream)
+                                                  .collect(Collectors.toUnmodifiableList());
+    }
+
+    public IAnnotation<?> getIntClassAnnotation(String classIntName, String annotationIntClass) {
+        final var anno = scannedClasses.get(classIntName).annotations.get(annotationIntClass);
+        return new IAnnotation<>() {
+            @Override
+            public String getStringValue(String memberName) {
+                return anno.get(memberName);
+            }
+        };
     }
 
     protected void scanDirectory(File dirFile) throws Exception {
@@ -246,7 +262,7 @@ public class ModScanner implements IModScanner, Opcodes {
         public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
             ModScanner.this.classesByAnnotation.get(Type.getType(descriptor).getInternalName()).add(classInfo.name);
             if (visible) {
-                final var annoMembers = classInfo.annotations.get(descriptor);
+                final var annoMembers = classInfo.annotations.get(Type.getType(descriptor).getInternalName());
                 return new AnnotationVisitor(ASM9) {
                     public void visit(String name, Object value) {
                         if (value instanceof Type) {

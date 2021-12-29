@@ -21,6 +21,7 @@ import org.objectweb.asm.util.CheckClassAdapter;
 import org.objectweb.asm.util.TraceClassVisitor;
 
 import de.dakror.modding.ModLoader;
+import de.dakror.modding.asm.augmentation.ClassAugmentationImpl;
 
 public class ASMModLoader extends ModLoader {
     public static boolean checkClasses = false;
