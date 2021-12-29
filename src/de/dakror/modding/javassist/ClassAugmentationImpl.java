@@ -277,7 +277,7 @@ public class ClassAugmentationImpl extends ClassAugmentationBase<CtClass, ClassP
                 var newMethod = new CtMethod(method, targetClass, fixMap);
                 newMethod.instrument(methodConv);
                 if (baseMethod == null) {
-                    var newName = renamed(method);
+                    // var newName = renamed(method);
                 }
             }
 

@@ -10,6 +10,7 @@ import org.objectweb.asm.commons.SimpleRemapper;
 import de.dakror.modding.ClassReplacementBase;
 import de.dakror.modding.ModLoader;
 
+@ModLoader.Enabled(-1000)
 public class ClassReplacementImpl extends ClassReplacementBase<ClassVisitor, ClassReader> {
     public ClassVisitor redefineClass(String className, ClassVisitor visitor, ClassReader reader) throws ClassNotFoundException {
         return new ClassRemapper(

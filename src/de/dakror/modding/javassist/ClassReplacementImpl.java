@@ -1,14 +1,5 @@
 package de.dakror.modding.javassist;
 
-import java.io.IOException;
-import java.util.HashMap;
-import java.util.Map;
-
-import org.objectweb.asm.ClassReader;
-import org.objectweb.asm.ClassVisitor;
-import org.objectweb.asm.commons.ClassRemapper;
-import org.objectweb.asm.commons.SimpleRemapper;
-
 import de.dakror.modding.ClassReplacementBase;
 import javassist.ClassPool;
 import javassist.CtClass;

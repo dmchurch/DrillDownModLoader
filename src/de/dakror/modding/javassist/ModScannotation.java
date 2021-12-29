@@ -4,14 +4,12 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.function.Function;
 
 import org.scannotation.AnnotationDB;
 
 import de.dakror.modding.IModScanner;
-import de.dakror.modding.ModAPI;
 import de.dakror.modding.ModLoader;
-import de.dakror.modding.IModScanner.IAnnotation;
-import de.dakror.modding.ModAPI.Debug;
 import javassist.ClassPool;
 import javassist.LoaderClassPath;
 import javassist.NotFoundException;
@@ -46,13 +44,13 @@ public class ModScannotation implements IModScanner {
     }
 
     @Override
-    public IAnnotation<?> getClassAnnotation(String className, String annotationClass) {
+    public Function<String, IAnnotation<?>> getClassAnnotations(String className) {
         try {
             var ct = pool.get(className);
             // can't use ct.getAnnotation because that would trigger a class lookup, so instead:
             var cfile = ct.getClassFile();
             var annoAttr = (AnnotationsAttribute) cfile.getAttribute(AnnotationsAttribute.visibleTag);
-            return new AnnotationWrapper<>(annoAttr.getAnnotation(annotationClass));
+            return annotationClass -> new AnnotationWrapper<>(annoAttr.getAnnotation(annotationClass));
         } catch (NotFoundException e) {
             return null;
         }

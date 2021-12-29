@@ -16,7 +16,9 @@ import org.objectweb.asm.commons.SimpleRemapper;
 import de.dakror.modding.ClassAugmentationBase;
 import de.dakror.modding.asm.ASMModLoader;
 import de.dakror.modding.asm.Util;
+import de.dakror.modding.ModLoader;
 
+@ModLoader.Enabled(-100)
 public class ClassAugmentationImpl extends ClassAugmentationBase<ClassVisitor, ClassReader> {
     protected ASMModLoader modLoader;
 

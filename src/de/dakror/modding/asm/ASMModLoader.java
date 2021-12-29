@@ -21,7 +21,6 @@ import org.objectweb.asm.util.CheckClassAdapter;
 import org.objectweb.asm.util.TraceClassVisitor;
 
 import de.dakror.modding.ModLoader;
-import de.dakror.modding.asm.augmentation.ClassAugmentationImpl;
 
 public class ASMModLoader extends ModLoader {
     public static boolean checkClasses = false;
@@ -59,8 +58,6 @@ public class ASMModLoader extends ModLoader {
         // reset the counting so we only track classes that ASMModLoader can touch
         classLoader.time = classLoader.count = 0;
         registerMod(new ModScanner());
-        registerMod(new ClassReplacementImpl());
-        registerMod(new ClassAugmentationImpl(this));
     }
 
     @Override

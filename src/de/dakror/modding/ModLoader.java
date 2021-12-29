@@ -1,6 +1,10 @@
 package de.dakror.modding;
 
 import java.io.InputStream;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
@@ -138,8 +142,7 @@ abstract public class ModLoader implements IModLoader, ModAPI {
         this.modUrls = modUrls;
 
         implInit();
-        registerMod(new PropertyListEditor());
-        registerMod(new XMLResourceEditor());
+        getMod(IModScanner.class).scanForMods(this);
         return this;
     }
 
@@ -213,7 +216,7 @@ abstract public class ModLoader implements IModLoader, ModAPI {
         registerMod(mod);
     }
 
-    public void registerMod(IBaseMod mod) {
+    public <T extends IBaseMod> T registerMod(T mod) {
         try {
             mod.registered(this);
         } catch (Exception e) {
@@ -230,6 +233,7 @@ abstract public class ModLoader implements IModLoader, ModAPI {
                 debugln("Skipping registration of "+mod.toString()+" (not supported by this ModLoader?): "+e.getMessage());
             }
         }
+        return mod;
     }
 
     protected void registerClassMod(IClassMod<?,?> mod) {
@@ -334,6 +338,15 @@ abstract public class ModLoader implements IModLoader, ModAPI {
 
     ///////////// INTERFACES ////////////
 
+    @Retention(RetentionPolicy.RUNTIME)
+    @Target(ElementType.TYPE)
+    public static @interface Enabled {
+        /**
+         * Loading order for mods, in increasing order (ties are indeterminate).
+         * ClassReplacement loads at -1000, ClassAugmentation loads at -100.
+         */
+        int value() default 0;
+    }
     public static interface IBaseMod extends ModAPI {
         default void registered(ModLoader modLoader) throws Exception { }
     }

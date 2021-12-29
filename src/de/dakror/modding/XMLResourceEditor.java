@@ -19,6 +19,7 @@ import javax.xml.transform.stream.StreamResult;
 
 import org.w3c.dom.Document;
 
+@ModLoader.Enabled
 public class XMLResourceEditor implements ModLoader.IResourceMod {
     protected Map<String, List<Editor>> xmlEditors = DefaultingHashMap.using(ArrayList::new);
     protected DocumentBuilder docBuilder;

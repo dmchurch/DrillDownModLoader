@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
 
+@ModLoader.Enabled
 public class PropertyListEditor implements ModLoader.IResourceMod {
     protected Map<String, Map<String, String>> extraProperties = DefaultingHashMap.using(TreeMap::new);
 
