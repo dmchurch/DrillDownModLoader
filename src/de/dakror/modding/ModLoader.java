@@ -1,16 +1,23 @@
 package de.dakror.modding;
 
+import java.io.File;
 import java.io.InputStream;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.nio.file.DirectoryStream;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.PathMatcher;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -18,9 +25,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
 
-import de.dakror.modding.asm.ASMModLoader;
-import de.dakror.modding.javassist.JavassistModLoader;
-import de.dakror.modding.javassist.JavassistStackedModLoader;
 import de.dakror.modding.loader.IModLoader;
 import de.dakror.modding.loader.ModClassLoader;
 
@@ -29,11 +33,10 @@ import de.dakror.modding.loader.ModClassLoader;
  * chicken-and-egg problems; the actual ClassLoader responsible is an instance of {@link ModClassLoader},
  * which by necessity lives in its own separate package (Java doesn't like it when classes of a given
  * package are loaded by two separate ClassLoaders) and delegates to an instance of ModLoader for the
- * actual "modding" part of the process. Currently, there are three implementations of ModLoader: the {@link ASMModLoader},
- * the {@link JavassistModLoader}, and the {@link JavassistStackedModLoader}. I'm probably going to
- * standardize on the former, since it's not quite so heavy on the memory usage, but there's no reason
+ * actual "modding" part of the process. ModLoader itself is a base class that provides the interface,
+ * while the current implementation lives in {@link de.dakror.modding.asm.ASMModLoader}. There's no reason
  * other implementations couldn't be explored, for example to experiment with other bytecode-manipulation
- * libraries than Javassist.
+ * libraries than ASM.
  * <p>
  * The other thing that makes the below explanation out-of-date is that the split-horizon ClassLoader
  * implementation described simply doesn't work. The Java docs claim that the VM can cope with multiple
@@ -117,29 +120,48 @@ import de.dakror.modding.loader.ModClassLoader;
  */
 
 abstract public class ModLoader implements IModLoader, ModAPI {
+    public static final String MODLOADER_IMPL = System.getProperty("de.dakror.modding.impl", "de.dakror.modding.asm.ASMModLoader");
     protected ModClassLoader classLoader;
-    // private ClassLoader appLoader;
-    // private URL[] cpUrls;
     protected URL[] modUrls;
-    // private Map<String, byte[]> classes = new HashMap<>();
-    // private Map<String, Class<?>> definedClasses = new HashMap<>();
-    // private Map<String, byte[]> resources = new HashMap<>();
-    // private Map<String, ProtectionDomain> packageDomains = new HashMap<>();
     protected List<IBaseMod> mods = new ArrayList<>();
     protected List<IClassMod<?,?>> classMods = new ArrayList<>();
     protected List<IResourceMod> resourceMods = new ArrayList<>();
 
-    public static IModLoader newInstance(ModClassLoader modClassLoader, String[] args) {
-        // var modLoader = new ClassPoolModLoader();
-        var modLoader = new ASMModLoader();
-        return modLoader;
+    public static IModLoader newInstance(ModClassLoader modClassLoader, String[] args) throws ClassNotFoundException, ClassCastException {
+        Class<?> modLoaderClass = Class.forName(MODLOADER_IMPL);
+
+        assert modLoaderClass != ModLoader.class; // avoid this infinite loop, let's do
+        try {
+            // Try delegating to the defined loader's static newInstance method, if it exists. If not we'll just try direct instantiation.
+            Method newInstanceMethod = modLoaderClass.getDeclaredMethod("newInstance", ModClassLoader.class, String[].class);
+
+            // double-check that we're not recursing ourselves
+            if (!newInstanceMethod.equals(ModLoader.class.getDeclaredMethod("newInstance")))  {
+                return (IModLoader) newInstanceMethod.invoke(null, modClassLoader, args);
+            }
+        } catch (NoSuchMethodException|IllegalAccessException|IllegalArgumentException ignore) {
+        } catch (InvocationTargetException ite) {
+            // We might care about this. Spit out diagnostics before continuing.
+            ModAPI.DEBUGLN("Exception while executing %s.newInstance(%s, %s): %s", MODLOADER_IMPL, modClassLoader, Arrays.toString(args), ite.getTargetException());
+        }
+
+        // No static newInstance() on the target class. That's fine, we'll just try instantiating it ourselves.
+        try {
+            return modLoaderClass.asSubclass(IModLoader.class).getConstructor().newInstance();
+        } catch (NoSuchMethodException|InstantiationException|IllegalAccessException e) {
+            throw new UnsupportedOperationException(String.format("%s.newInstance() failed to create implementation by new %s()", ModLoader.class.getName(), MODLOADER_IMPL), e);
+        } catch (InvocationTargetException ite) {
+            var e = ite.getTargetException();
+            throw new RuntimeException(String.format("While instantiating implementation, new %s() threw exception: %s", MODLOADER_IMPL, e.getMessage()), e);
+        }
     }
 
-    public ModLoader init(ModClassLoader modClassLoader, URL[] modUrls, ClassLoader appLoader, String[] args) {
+    @Override
+    public ModLoader init(ModClassLoader modClassLoader, ClassLoader appLoader, String[] args) {
         this.classLoader = modClassLoader;
-        // this.cpUrls = getURLs();
-        // this.appLoader = appLoader;
-        this.modUrls = modUrls;
+        this.modUrls = findMods();
+
+        modClassLoader.addModURLs(modUrls);
 
         implInit();
         getMod(IModScanner.class).scanForMods(this);
@@ -148,6 +170,30 @@ abstract public class ModLoader implements IModLoader, ModAPI {
 
     public List<URL> getModUrls() {
         return List.of(modUrls);
+    }
+
+    protected URL[] findMods() {
+        debugln("finding mods");
+        List<URL> mods = new ArrayList<URL>();
+        try {
+            File modDir = new File("./mods");
+            if (modDir.isDirectory()) {
+                PathMatcher jarMatcher = FileSystems.getDefault().getPathMatcher("glob:**.jar");
+                try (DirectoryStream<Path> dirStream = Files.newDirectoryStream(modDir.toPath())) {
+                    for (Path entry: dirStream) {
+                        if (Files.isDirectory(entry) || (jarMatcher.matches(entry) && Files.isReadable(entry))) {
+                            debugln("adding: "+entry);
+                            mods.add(entry.normalize().toUri().toURL());
+                        }
+                    }
+                }
+            }
+            debugln("adding "+Path.of("./TestMod/bin/main"));
+            mods.add(Path.of("./TestMod/bin/main").normalize().toUri().toURL());
+        } catch (Exception e) {
+            debugln("Unhandled exception while finding mods, ignoring: "+e);
+        }
+        return mods.toArray(URL[]::new);
     }
 
     abstract protected void implInit();
