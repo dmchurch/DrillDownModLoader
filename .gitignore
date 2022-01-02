@@ -1,2 +1,12 @@
-bin
-lib
+*/bin
+*/lib
+
+jre
+mods
+
+*.exe
+*.jar
+*.class
+*.dump
+*.log
+*.ini

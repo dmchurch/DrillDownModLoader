@@ -5,7 +5,6 @@ plugins {
 sourceSets {
 	main {
 		java {
-			srcDirs = ['src']
 			exclude 'de/dakror/modding/javassist/**'
 		}
 	}
