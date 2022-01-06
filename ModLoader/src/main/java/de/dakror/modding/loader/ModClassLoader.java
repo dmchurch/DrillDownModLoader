@@ -4,6 +4,7 @@ package de.dakror.modding.loader;
 
 import java.io.File;
 import java.io.InputStream;
+import java.lang.instrument.Instrumentation;
 import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Field;
 import java.lang.reflect.InaccessibleObjectException;
@@ -20,13 +21,23 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.StringTokenizer;
+import java.util.WeakHashMap;
 
-public class ModClassLoader extends URLClassLoader {
+// We can't afford to actually import the agent's boot Interceptor class, in case ModClassLoader was
+// loaded in some way other than through ModAgent. So we create our own Interceptor$IClassInterceptor
+// and trust the agent to rewrite it into the appropriate inheritance.
+
+// import de.dakror.modding.agent.boot.Interceptor;
+interface Interceptor { interface IClassInterceptor {
+    Class<?> interceptedFindClass(ClassLoader loader, String name) throws ClassNotFoundException;
+} }
+public class ModClassLoader extends URLClassLoader implements Interceptor.IClassInterceptor {
     private static final String MODLOADER_CLASS = "de.dakror.modding.ModLoader";
+    private static final Map<ClassLoader, ModClassLoader> modClassLoaderHints = new WeakHashMap<>();
+    private static final String MY_PACKAGE_PREFIX = ModClassLoader.class.getPackageName() + ".";
 
     static {
         registerAsParallelCapable();
-
     }
 
     private final ClassLoader appLoader;
@@ -34,16 +45,23 @@ public class ModClassLoader extends URLClassLoader {
     private Map<String, ProtectionDomain> packageDomains = new HashMap<>();
     private boolean initialized = false;
     private boolean stubLauncher;
+    private String noInterception = null;
 
     public static ModClassLoader getModClassLoader(ClassLoader hint) {
         for (ClassLoader loader = hint; loader != null; loader = loader.getParent()) {
             if (loader instanceof ModClassLoader) {
+                modClassLoaderHints.put(hint, (ModClassLoader) loader);
                 return (ModClassLoader)loader;
+            } else if (modClassLoaderHints.containsKey(loader)) {
+                return modClassLoaderHints.get(loader);
             } else if (loader.getClass().getName().endsWith("StubClassLoader")) {
                 try {
                     ClassLoader stubDelegate = (ClassLoader)loader.getClass().getMethod("getDelegate").invoke(loader);
                     if (stubDelegate != null && stubDelegate != hint) {
-                        return getModClassLoader(stubDelegate);
+                        var mcl = getModClassLoader(stubDelegate);
+                        if (mcl != null) {
+                            modClassLoaderHints.put(stubDelegate, mcl);
+                        }
                     }
                 } catch (ReflectiveOperationException e) { }
             }
@@ -54,9 +72,25 @@ public class ModClassLoader extends URLClassLoader {
         }
         return null;
     }
+    // convenience methods
+    public static ModClassLoader getMyModClassLoader(Class<?> caller) {
+        return getModClassLoader(caller.getClassLoader());
+    }
+    public static ModClassLoader getMyModClassLoader(Object caller) {
+        return getModClassLoader(caller.getClass().getClassLoader());
+    }
 
     public ModClassLoader(ClassLoader appLoader) {
-        super(new URL[0], ModClassLoader.class.getClassLoader());
+        this(appLoader, null, null);
+    }
+    public ModClassLoader(ClassLoader appLoader, ClassLoader parent) {
+        this(appLoader, parent, null);
+    }
+    public ModClassLoader(ClassLoader appLoader, Instrumentation inst) {
+        this(appLoader, appLoader.getParent(), inst);
+    }
+    public ModClassLoader(ClassLoader appLoader, ClassLoader parent, Instrumentation inst) {
+        super(new URL[0], parent != null ? parent : ModClassLoader.class.getClassLoader());
 
         boolean isSystemClassLoader = false;
         try {
@@ -66,7 +100,7 @@ public class ModClassLoader extends URLClassLoader {
         }
         this.appLoader = appLoader;
 
-        if (isSystemClassLoader) {
+        if (isSystemClassLoader || inst != null) {
             stubLauncher = true;
         } else {
             stubLauncher = false;
@@ -74,7 +108,7 @@ public class ModClassLoader extends URLClassLoader {
         }
     }
 
-    public void init() {
+    private void init() {
         if (initialized) return;
         initialized = true;
         for (var url: findClassPaths(appLoader)) {
@@ -85,6 +119,11 @@ public class ModClassLoader extends URLClassLoader {
             // if we had to add ModLoader to the classpath, make sure we're using it here!
             addURL(loaderUrl);
         }
+        registerLoaderHintFor(appLoader);
+    }
+
+    public void registerLoaderHintFor(ClassLoader loader) {
+        modClassLoaderHints.put(loader, this);
     }
 
     public boolean addModURL(URL modUrl) {
@@ -145,9 +184,11 @@ public class ModClassLoader extends URLClassLoader {
     private ProtectionDomain getProtectionDomain(String name) {
         ProtectionDomain pd = packageDomains.get(getPackageName(name));
         if (pd == null) {
+            noInterception = name;
             try {
                 pd = recordPD(appLoader.loadClass(name)).getProtectionDomain();
             } catch (ClassNotFoundException e) {}
+            noInterception = null;
         }
         return pd;
     }
@@ -187,10 +228,27 @@ public class ModClassLoader extends URLClassLoader {
         return null;
     }
 
+    public Class<?> interceptedFindClass(ClassLoader loader, String name) throws ClassNotFoundException {
+        if (name.startsWith(MY_PACKAGE_PREFIX)) {
+            // don't intercept load of our sibling classes
+            throw new UnsupportedOperationException("Sibling load");
+        } else if (noInterception != null && name.equals(noInterception)) {
+            noInterception = null;
+            throw new UnsupportedOperationException("no interception for "+name);
+        }
+        var ret = this.findLoadedClass(name);
+        if (ret != null) return ret;
+        return findClass(name);
+    }
+
     // findClass is only called the first time we look for a class, and ONLY if the system
     // classloader couldn't find it (so it won't be called for java.* classes, etc).
     @Override
-    protected Class<?> findClass(String name) throws ClassNotFoundException {
+    public Class<?> findClass(String name) throws ClassNotFoundException {
+        if (name.startsWith(MY_PACKAGE_PREFIX)) {
+            // if we get asked for one of our siblings, delegate to our loader
+            return ModClassLoader.class.getClassLoader().loadClass(name);
+        }
         if (!initialized) {
             init();
             if (stubLauncher) {

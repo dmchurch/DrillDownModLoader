@@ -7,6 +7,9 @@ sourceSets {
 		java {
 			exclude 'de/dakror/modding/javassist/**'
 		}
+		resources {
+			srcDir project('boot-jar').tasks.jar.destinationDirectory
+		}
 	}
 }
 
@@ -17,6 +20,7 @@ repositories {
 dependencies {
 	compileOnly files('../TheQuarry-full.jar')
     compileOnly project(':StubLoader')
+	compileOnly project('boot-jar')
 	// implementation 'de.juplo:scannotation:1.0.4' // 1.0.3 has an unfixed bug around classpath directories
 	// implementation 'org.javassist:javassist:3.28.0-GA'
 	implementation 'org.ow2.asm:asm:9.2'

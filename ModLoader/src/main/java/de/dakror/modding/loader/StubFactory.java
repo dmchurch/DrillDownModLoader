@@ -3,14 +3,14 @@ package de.dakror.modding.loader;
 import java.nio.ByteBuffer;
 
 // StubbedLauncher isn't actually used. It just provides the template for the
-// code in StubFactory.
-public interface StubbedLauncher {
+// code in StubFactory. It's an interface to avoid producing constructors.
+interface StubbedLauncher {
     public static void main(String[] args) {
-        ModClassLoader.fromStub(StubbedLauncher.class, args);
-    }
+        ModClassLoader.fromStub(StubbedLauncher.class, args);       // Line 9 of this file
+    }                                                               // Line 10 of this file
 }
 
-class StubFactory extends ClassLoader {
+public class StubFactory extends ClassLoader {
     private static final int TAG_CLASS = 7;
     private static final int TAG_METHODREF = 10;
     private static final int TAG_NAME_AND_TYPE = 12;
@@ -65,7 +65,7 @@ class StubFactory extends ClassLoader {
         return new StubFactory(modClassLoader)
             .u4(0xCAFEBABE)     // magic
             .u2(0).u2(55)       // minor, major version (55.0 = Java 11)
-            .u2(14)             // const pool size (last index + 1)
+            .u2(17)             // const pool size (last index + 1)
                 .cpRef(TAG_CLASS, 2)                // #1: Class<name>
                 .cpUtf8(name.replace('.','/'))      // #2
                 .cpRef(TAG_CLASS, 4)                // #3: Class<Object>
@@ -79,6 +79,9 @@ class StubFactory extends ClassLoader {
                 .cpRef(TAG_NAME_AND_TYPE, 12, 13)   // #11 NameType<fromStub, void (Class, String[])>
                 .cpUtf8("fromStub")                 // #12
                 .cpUtf8("(Ljava/lang/Class;[Ljava/lang/String;)V") // #13
+                .cpUtf8("LineNumberTable")          // #14
+                .cpUtf8("SourceFile")               // #15
+                .cpUtf8("StubFactory.java")         // #16
             .u2(ACC_PUBLIC | ACC_INTERFACE | ACC_ABSTRACT)
             .u2(1) // thisclass
             .u2(3) // superclass
@@ -91,16 +94,24 @@ class StubFactory extends ClassLoader {
                 .u2(6) // "([Ljava/lang/String;)V"
                 .u2(1) // #attributes
                     .u2(7)  // "Code"
-                    .u4(19) // length
+                    .u4(35) // length
                         .u2(2).u2(1)    // stack 2, locals 1
                         .u4(7)          // code length
                             .u1(I_LDC).u1(1)          // 0 - LDC Class<name>
                             .u1(I_ALOAD_0)            // 2 - ALOAD 0 (args)
                             .u1(I_INVOKESTATIC).u2(8) // 3 - INVOKESTATIC
                             .u1(I_RETURN)             // 6
-                        .u2(0)          // #exceptions
-                        .u2(0)          // #attributes
-            .u2(0) // #attributes
+                        .u2(0)      // #exceptions
+                        .u2(1)      // #attributes
+                            .u2(14)     // "LineNumberTable"
+                            .u4(10)     // length
+                            .u2(2)      // #entries
+                                .u2(0).u2(9)    // 0 - line 9
+                                .u2(6).u2(10)   // 6 - line 10
+            .u2(1) // #attributes
+                .u2(15) // "SourceFile"
+                .u4(2)  // length
+                .u2(16) // "StubFactory.java"
             .buildStub(name);
     }
 }

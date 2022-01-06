@@ -377,7 +377,7 @@ abstract public class ModLoader implements IModLoader, ModAPI {
         debugln("patching enums");
         Patcher.patchEnums();
         debugln("loading main class");
-        var cls = classLoader.loadClass(mainClass);
+        var cls = classLoader.findClass(mainClass); // not loadClass, we want to be sure our classloader is loading it
         debugln("calling main()");
         cls.getMethod("main", String[].class).invoke(null, (Object) args);
     }

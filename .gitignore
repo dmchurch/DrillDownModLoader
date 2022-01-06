@@ -1,8 +1,10 @@
 */bin
 */lib
+*/build
 
 jre
 mods
+build
 
 *.exe
 *.jar

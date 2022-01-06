@@ -1,2 +1,4 @@
-include('ModLoader')
+rootProject.name = 'DrillDownModLoader'
+
+include('ModLoader:boot-jar')
 include('StubLoader')
