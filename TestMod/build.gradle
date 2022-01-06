@@ -1,0 +1,8 @@
+plugins {
+    id 'java'
+}
+
+dependencies {
+	implementation files('../TheQuarry-full.jar')
+    implementation project(':ModLoader')
+}

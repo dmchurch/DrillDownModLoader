@@ -30,7 +30,7 @@ public class Patcher {
         @Target({ElementType.CONSTRUCTOR, ElementType.METHOD})
         public static @interface PreInit {
             /** The name of the method to execute prior to <init> */
-            String value() default "";
+            String preInitMethod() default "";
             Class<?> inClass() default SUPERCLASS.class;
         }
 
@@ -38,6 +38,13 @@ public class Patcher {
         @Target({ElementType.CONSTRUCTOR})
         public static @interface MultiPreInit {
             PreInit[] value();
+        }
+
+        @Retention(RetentionPolicy.RUNTIME)
+        @Target({ElementType.CONSTRUCTOR, ElementType.METHOD})
+        public static @interface DelayedInitArgs {
+            /** The name of the private void instance method whose invocation will be replaced by a super() call */
+            String value();
         }
     }
 
