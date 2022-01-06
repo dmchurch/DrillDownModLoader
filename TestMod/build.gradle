@@ -3,6 +3,6 @@ plugins {
 }
 
 dependencies {
-	implementation files('../TheQuarry-full.jar')
+	implementation files("${DRILLDOWN_INSTALLDIR}/${DRILLDOWN_JARNAME}")
     implementation project(':ModLoader')
 }

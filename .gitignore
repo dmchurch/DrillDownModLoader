@@ -1,10 +1,13 @@
-*/bin
-*/lib
-*/build
+**/bin
+**/lib
+**/build
+**/.project
+**/.classpath
+**/.settings
 
 jre
 mods
-build
+gradle.properties
 
 *.exe
 *.jar

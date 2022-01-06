@@ -1,0 +1,4 @@
+# Replace this with the path to your Drill Down installation folder and rename this file to "gradle.properties"
+DRILLDOWN_INSTALLDIR=C:/Program Files (x86)/Steam/steamapps/common/The Quarry
+# Shouldn't need changing
+DRILLDOWN_JARNAME=TheQuarry-full.jar

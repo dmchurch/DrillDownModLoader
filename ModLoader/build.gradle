@@ -11,12 +11,10 @@ sourceSets {
 	}
 }
 
-repositories { 
-    mavenCentral()
-}
+tasks.processResources.dependsOn(project('boot-jar').tasks.jar)
 
 dependencies {
-	compileOnly files('../TheQuarry-full.jar')
+	implementation files("${DRILLDOWN_INSTALLDIR}/${DRILLDOWN_JARNAME}")
     compileOnly project(':StubLoader')
 	compileOnly project('boot-jar')
 	implementation 'org.ow2.asm:asm:9.2'
