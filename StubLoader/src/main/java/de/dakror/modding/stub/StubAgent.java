@@ -2,6 +2,7 @@ package de.dakror.modding.stub;
 
 import java.lang.instrument.Instrumentation;
 import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -20,13 +21,13 @@ public class StubAgent {
     }
 
     public static void premain(String agentArgs, Instrumentation inst) throws Throwable {
-        for (var agent: agents.values()) {
+        for (Agent agent: agents.values()) {
             agent.premain(agentArgs, inst);
         }
     }
 
     public static void agentmain(String agentArgs, Instrumentation inst) throws Throwable {
-        for (var agent: agents.values()) {
+        for (Agent agent: agents.values()) {
             agent.agentmain(agentArgs, inst);
         }
     }
@@ -108,7 +109,7 @@ public class StubAgent {
 
         // try calling a method, throw any exceptions
         protected Object callMethod(String methodName, Object... args) throws Throwable {
-            for (var method: agentClass.getMethods()) {
+            for (Method method: agentClass.getMethods()) {
                 if (!method.getName().equals(methodName) || !Modifier.isStatic(method.getModifiers())) {
                     continue;
                 }
