@@ -1,4 +1,5 @@
 plugins {
+    id 'com.github.johnrengelman.shadow' version '7.1.2'
 	id 'java'
 }
 
@@ -11,14 +12,18 @@ sourceSets {
 	}
 }
 
-tasks.processResources.dependsOn(project('boot-jar').tasks.jar)
+tasks.processResources.dependsOn('boot-jar:jar')
 
 dependencies {
-	implementation files("${DRILLDOWN_INSTALLDIR}/${DRILLDOWN_JARNAME}")
+	compileOnly files("${DRILLDOWN_INSTALLDIR}/${DRILLDOWN_JARNAME}")
     compileOnly project(':StubLoader')
 	compileOnly project('boot-jar')
 	implementation 'org.ow2.asm:asm:9.2'
 	implementation 'org.ow2.asm:asm-commons:9.2'
 	implementation 'org.ow2.asm:asm-util:9.2'
 	implementation 'org.ow2.asm:asm-tree:9.2'
+}
+
+shadowJar {
+	minimize()
 }

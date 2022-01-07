@@ -1,9 +1,6 @@
 package de.dakror.modding.agent;
 
 import java.lang.instrument.ClassFileTransformer;
-import java.lang.instrument.Instrumentation;
-import java.lang.instrument.UnmodifiableClassException;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Modifier;
 import java.security.ProtectionDomain;
 import java.util.Arrays;
@@ -23,24 +20,27 @@ import org.objectweb.asm.commons.Method;
 import org.objectweb.asm.util.CheckClassAdapter;
 
 import de.dakror.modding.agent.boot.Interceptor;
-import de.dakror.modding.agent.boot.Interceptor.IClassInterceptor;
 import de.dakror.modding.agent.boot.Interceptor.NoInterceptionException;
 
-public class ModClassTransformer implements ClassFileTransformer {
-    public final ClassLoader classLoader;
-
+public class CallInterceptionTransformer implements ClassFileTransformer {
     private static final Map<Method, Method> INTERCEPTIONS = getInterceptedMethods();
-    private final Map<String, Map<Method, Method>> methodsToHookByClass;
-    private final Class<?>[] classesToRetransform;
 
-    ModClassTransformer(ClassLoader classLoader) {
-        this.classLoader = classLoader;
+    static {
+        if ("true".equals(System.getProperty("de.dakror.modding.boot.debug"))) {
+            Interceptor.DEBUG_INTERCEPTOR = true;
+        }
+    }
+
+    private final Map<String, Map<Method, Method>> methodsToHookByClass;
+    final Class<?>[] classesToRetransform;
+    
+    CallInterceptionTransformer(Object target) {
         this.methodsToHookByClass = new HashMap<>();
 
         var methodsToHook = new HashMap<>(INTERCEPTIONS);
         var classesToHook = new HashSet<Class<?>>();
 
-        for (Class<?> checkClass = classLoader.getClass(); checkClass != null && !methodsToHook.isEmpty(); checkClass = checkClass.getSuperclass()) {
+        for (Class<?> checkClass = target.getClass(); checkClass != null && !methodsToHook.isEmpty(); checkClass = checkClass.getSuperclass()) {
             for (var reflectMethod: checkClass.getDeclaredMethods()) {
                 var baseMethod = Method.getMethod(reflectMethod);
                 var hookMethod = methodsToHook.remove(baseMethod);
@@ -52,63 +52,6 @@ public class ModClassTransformer implements ClassFileTransformer {
         }
 
         this.classesToRetransform = classesToHook.toArray(Class[]::new);
-    }
-
-    public static IClassInterceptor hookInterceptor(ClassLoader toHook, IClassInterceptor hookTarget) {
-        return Interceptor.loaderInterceptions.put(toHook, hookTarget);
-    }
-
-    public static void walkDeclaredClasses(Class<?> outerClass) {
-        for (var sub: outerClass.getDeclaredClasses()) {
-            walkDeclaredClasses(sub);
-        }
-    }
-
-    // load the ModClassLoader class definition, transform any direct implementation of an interface named IClassInterceptor
-    // contained within a class/interface named Interceptor into an implementation of the actual Interceptor$IClassInterceptor.
-    public static Object loadAndHookModClassLoader(ClassLoader appLoader, Instrumentation inst, String mclClassName) {
-        final String mclIntName = mclClassName.replace('.','/');
-        var transformer = new StubReplacementTransformer(cn -> cn.startsWith(mclIntName), Interceptor.class);
-
-        Class<? extends IClassInterceptor> mclClass;
-        inst.addTransformer(transformer);
-        try {
-            var cls = appLoader.loadClass(mclClassName);
-            // ensure any member classes have also been transformed before removing this transformer
-            walkDeclaredClasses(cls);
-            mclClass = cls.asSubclass(IClassInterceptor.class);
-        } catch (ClassNotFoundException cnfe) {
-            return null;
-        } catch (Throwable e) {
-            throw new RuntimeException(e);
-        } finally {
-            inst.removeTransformer(transformer);
-        }
-
-        try {
-            var mcl = mclClass.getConstructor(ClassLoader.class, Instrumentation.class).newInstance(appLoader, inst);
-            hookInterceptor(appLoader, mcl);
-            return mcl;
-        } catch (InvocationTargetException ite) {
-            throw new RuntimeException(ite.getTargetException());
-        } catch (ReflectiveOperationException roe) {
-            throw new RuntimeException(roe);
-        }
-    }
-
-    private Class<?>[] getClassesToRetransform() {
-        return classesToRetransform;
-    }
-
-    static void hookClassLoader(ClassLoader classLoader, Instrumentation inst) {
-        var transformer = new ModClassTransformer(classLoader);
-        inst.addTransformer(transformer, true);
-        try {
-            inst.retransformClasses(transformer.getClassesToRetransform());
-        } catch (UnmodifiableClassException uce) {
-            throw new RuntimeException(uce); // unlikely
-        }
-        inst.removeTransformer(transformer);
     }
 
     @Override
@@ -141,21 +84,6 @@ public class ModClassTransformer implements ClassFileTransformer {
         return cw.toByteArray();
     }
 
-    static Map<Method, Method> getInterceptedMethods() {
-        Map<Method, Method> methods = new HashMap<>();
-        for (var reflectMethod: Interceptor.class.getDeclaredMethods()) {
-            int mod = reflectMethod.getModifiers();
-            if (Modifier.isPublic(mod) && Modifier.isStatic(mod)) {
-                var hookMethod = Method.getMethod(reflectMethod);
-                var hookArgTypes = hookMethod.getArgumentTypes();
-                var baseMethod = new Method(hookMethod.getName(), hookMethod.getReturnType(),
-                                            Arrays.copyOfRange(hookArgTypes, 1, hookArgTypes.length));
-                methods.put(baseMethod, hookMethod);
-            }
-        }
-        return Map.copyOf(methods);
-    }
-
     private class InterceptionAdapter extends GeneratorAdapter {
         final Method interceptMethod;
         public InterceptionAdapter(MethodVisitor mv, int access, String name, String descriptor, Method interceptMethod) {
@@ -180,5 +108,20 @@ public class ModClassTransformer implements ClassFileTransformer {
             pop();
             // then continue with the usual code
         }
+    }
+
+    static Map<Method, Method> getInterceptedMethods() {
+        Map<Method, Method> methods = new HashMap<>();
+        for (var reflectMethod: Interceptor.class.getDeclaredMethods()) {
+            int mod = reflectMethod.getModifiers();
+            if (Modifier.isPublic(mod) && Modifier.isStatic(mod)) {
+                var hookMethod = Method.getMethod(reflectMethod);
+                var hookArgTypes = hookMethod.getArgumentTypes();
+                var baseMethod = new Method(hookMethod.getName(), hookMethod.getReturnType(),
+                                            Arrays.copyOfRange(hookArgTypes, 1, hookArgTypes.length));
+                methods.put(baseMethod, hookMethod);
+            }
+        }
+        return Map.copyOf(methods);
     }
 }

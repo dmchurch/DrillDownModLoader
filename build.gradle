@@ -1,4 +1,4 @@
-subprojects {
+allprojects {
     apply plugin: 'java'
 
     sourceCompatibility = 11
@@ -7,4 +7,31 @@ subprojects {
     repositories {
         mavenCentral()
     }
+}
+
+sourceSets {
+	main {
+		java {
+            // No actual source, this just compiles loader + bundled mods
+            srcDirs = []
+		}
+	}
+}
+
+dependencies {
+    implementation project(path: ':ModLoader', configuration: 'shadow')
+    implementation project(':TestMod')
+}
+
+jar {
+    archiveFileName = "ModLoader.jar"
+    destinationDirectory = file(".")
+    from {
+        configurations.compileClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+}
+
+tasks.register('installJar', Copy) {
+    from jar.archiveFile
+    into DRILLDOWN_INSTALLDIR
 }

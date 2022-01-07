@@ -1,0 +1,4 @@
+jar {
+    // Don't let shadowJar pick this up
+    archiveExtension = "bin"
+}

@@ -3,6 +3,6 @@ plugins {
 }
 
 dependencies {
-	implementation files("${DRILLDOWN_INSTALLDIR}/${DRILLDOWN_JARNAME}")
-    implementation project(':ModLoader')
+	compileOnly files("${DRILLDOWN_INSTALLDIR}/${DRILLDOWN_JARNAME}")
+    compileOnly project(':ModLoader')
 }

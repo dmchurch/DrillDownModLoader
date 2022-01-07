@@ -188,8 +188,6 @@ abstract public class ModLoader implements IModLoader, ModAPI {
                     }
                 }
             }
-            debugln("adding "+Path.of("./TestMod/bin/main"));
-            mods.add(Path.of("./TestMod/bin/main").normalize().toUri().toURL());
         } catch (Exception e) {
             debugln("Unhandled exception while finding mods, ignoring: "+e);
         }
