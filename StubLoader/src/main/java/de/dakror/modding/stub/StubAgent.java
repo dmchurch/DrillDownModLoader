@@ -13,6 +13,7 @@ public class StubAgent {
     private static final String AGENT_CLASS = System.getProperty("de.dakror.modding.agent.class", "de.dakror.modding.agent.ModAgent");
     private static final String AGENT_URL = System.getProperty("de.dakror.modding.agent.url"); // effective default of "ModLoader.jar", see findAgents()
     private static final boolean IS_DEV = AGENT_URL != null;
+    private static final ClassLoader platformLoader = getPlatformClassLoader();
 
     static final Map<String, Agent> agents = new HashMap<>();
     static {
@@ -57,8 +58,17 @@ public class StubAgent {
         }
     }
 
+    private static ClassLoader getPlatformClassLoader() {
+        try {
+            return (ClassLoader) ClassLoader.class.getMethod("getPlatformClassLoader").invoke(null);
+        } catch (ReflectiveOperationException e) {
+            // 1.8 doesn't have ClassLoader.getPlatformClassLoader, so just assume it's our parent classloader bc it doesn't matter
+            return StubAgent.class.getClassLoader().getParent();
+        }
+    }
+
     private static void tryLoading(URL url, String agentName) {
-        ClassLoader loader = url == null ? StubAgent.class.getClassLoader() : new StubLoader(new URL[] {url}, ClassLoader.getPlatformClassLoader());
+        ClassLoader loader = url == null ? StubAgent.class.getClassLoader() : new StubLoader(new URL[] {url}, platformLoader);
 
         try {
             Agent agent = new Agent(loader.loadClass(agentName));
