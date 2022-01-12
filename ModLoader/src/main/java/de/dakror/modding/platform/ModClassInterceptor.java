@@ -1,4 +1,4 @@
-package de.dakror.modding.loader;
+package de.dakror.modding.platform;
 
 import static de.dakror.modding.agent.boot.Interceptor.NO_INTERCEPTION;
 import static de.dakror.modding.agent.boot.Interceptor.interceptClasses;

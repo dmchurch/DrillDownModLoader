@@ -25,8 +25,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
 
-import de.dakror.modding.loader.IModLoader;
-import de.dakror.modding.loader.IModPlatform;
+import de.dakror.modding.platform.IModLoader;
+import de.dakror.modding.platform.IModPlatform;
 
 /**
  * The following description is out-of-date. First, ModLoader isn't itself a ClassLoader, because of

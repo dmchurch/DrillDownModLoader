@@ -1,4 +1,4 @@
-package de.dakror.modding.loader;
+package de.dakror.modding.platform;
 
 import java.util.ArrayList;
 import java.util.List;

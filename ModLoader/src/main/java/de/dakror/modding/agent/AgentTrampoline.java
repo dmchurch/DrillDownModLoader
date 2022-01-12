@@ -11,7 +11,7 @@ import java.util.Set;
 import de.dakror.modding.agent.ModAgent.TaskLog;
 import de.dakror.modding.agent.boot.Interceptor;
 import de.dakror.modding.agent.boot.Interceptor.IClassInterceptor;
-import de.dakror.modding.loader.ModClassInterceptor;
+import de.dakror.modding.platform.ModClassInterceptor;
 
 public class AgentTrampoline {
     public final ClassLoader classLoader;
