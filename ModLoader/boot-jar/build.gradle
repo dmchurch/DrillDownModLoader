@@ -1,4 +1,32 @@
+apply plugin: 'eclipse'
+
+def MODULE_NAME = 'ALL-UNNAMED';
+def MODULE_DEPS = [
+    'java.base/jdk.internal.access',
+    'java.base/jdk.internal.loader',
+];
+
+tasks.compileJava {
+    MODULE_DEPS.each {
+        options.compilerArgs << "--add-exports=${it}=${MODULE_NAME}"
+    }
+}
+
 jar {
     // Don't let shadowJar pick this up
     archiveExtension = "bin"
+}
+
+eclipse {
+    classpath {
+        file {
+            whenMerged { classpath ->
+                classpath.entries.findAll { it.kind == "con" && it.path.startsWith("org.eclipse.jdt.launching.JRE_CONTAINER") }.each { con ->
+                    con.entryAttributes['add-exports'] = MODULE_DEPS.collect {
+                        "${it}=${MODULE_NAME}"
+                    }.join(':')
+                }
+            }
+        }
+    }
 }

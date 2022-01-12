@@ -1,33 +1,37 @@
 package de.dakror.modding.agent;
 
+import static java.lang.invoke.MethodHandles.publicLookup;
+import static java.lang.invoke.MethodType.methodType;
+
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.instrument.Instrumentation;
+import java.lang.invoke.MethodHandle;
 import java.net.URISyntaxException;
-import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.function.Consumer;
 import java.util.jar.JarFile;
 
 public class ModAgent {
-    // private final String agentArgs;
+    private final String agentArgs;
     public static final boolean IS_DEBUG = "true".equals(System.getProperty("de.dakror.modding.agent.debug"));
-    private final String MODCLASSLOADER_CLASS = "de.dakror.modding.loader.ModClassLoader";
     private final ClassLoader appLoader;
     final Instrumentation inst;
     static TaskLog task = null;
+    private static volatile ModAgent agent;
+    private static boolean bootJarLoaded = false;
 
-    private JarFile bootJarFile = null;
+    private AgentTrampoline trampoline;
 
     public ModAgent(String agentArgs, Instrumentation inst) {
-        // this.agentArgs = agentArgs;
+        this.agentArgs = agentArgs;
         this.inst = inst;
         this.appLoader = ClassLoader.getSystemClassLoader();
     }
 
-    private void start() /* throws Exception */ {
+    private void start() throws Throwable {
         if (!inst.isRetransformClassesSupported()) {
             throw new UnsupportedOperationException("Bad configuration, expecting retransform capability");
         }
@@ -35,17 +39,24 @@ public class ModAgent {
         ClassLoader myLoader = ModAgent.class.getClassLoader();
         if (task(myLoader != appLoader, "Adding modloader to classpath")) {
             try {
-                if (myLoader instanceof URLClassLoader) {
-                    for (var url: ((URLClassLoader)myLoader).getURLs()) {
-                        inst.appendToSystemClassLoaderSearch(new JarFile(new File(url.toURI()), false));
-                    }
-                }
+                var myLocation = ModAgent.class.getProtectionDomain().getCodeSource().getLocation();
+                inst.appendToSystemClassLoaderSearch(new JarFile(new File(myLocation.toURI()), false));
             } catch (IOException|URISyntaxException e) {
                 task.report(e);
             }
+            task.report("migrating");
+            MethodHandle agentmainHandle;
+            try {
+                var agentClass = appLoader.loadClass(ModAgent.class.getName());
+                agentmainHandle = publicLookup().findStatic(agentClass, "agentmain", methodType(void.class, String.class, Instrumentation.class));
+            } catch (ClassNotFoundException cnfe) {
+                throw task.fail(cnfe);
+            }
             task.finish();
+            agentmainHandle.invokeExact(agentArgs, inst);
         }
-        if (task(bootJarFile == null, "Loading boot jar")) {
+        if (task(!bootJarLoaded, "Loading boot jar")) {
+            JarFile bootJarFile = null;
             try (InputStream jarStream = ModAgent.class.getResourceAsStream("/boot-jar.bin")) {
                 if (jarStream == null) {
                     throw new RuntimeException("Could not find boot jar");
@@ -54,17 +65,29 @@ public class ModAgent {
                 jarPath.deleteOnExit();
                 Files.copy(jarStream, jarPath.toPath(), StandardCopyOption.REPLACE_EXISTING);
                 bootJarFile = new JarFile(jarPath, false);
+                task.report("loaded");
             } catch (IOException e) {
                 task.report(e);
             }
-            if (!task.thrown) {
+            if (bootJarFile != null) {
+                task.report("registering");
                 inst.appendToBootstrapClassLoaderSearch(bootJarFile);
             }
             task.finish();
         }
-        var at = new AgentTrampoline(appLoader, inst);
-        task("Hooking builtin class loader", at::hookClassLoader);
-        task("Loading modloader", t -> at.loadAndHookModClassLoader(t, MODCLASSLOADER_CLASS));
+        trampoline = new AgentTrampoline(appLoader, inst);
+        task("Hooking builtin class loader", trampoline::hookClassLoader);
+        task("Hooking main class execution", trampoline::hookMainClass);
+        agent = this;
+    }
+
+    // Gets called after trampoline.hookMainClass
+    public static void main(String[] args) throws Throwable {
+        var task = agent.task("Loading modloader");
+        var mainMethod = agent.trampoline.loadAndStartModPlatform(task, args);
+        task.finish();
+        agent = null; // don't need to keep this around
+        mainMethod.main(args);
     }
 
     private static void debugln(String message) {
@@ -97,6 +120,11 @@ public class ModAgent {
         }
     }
 
+    @FunctionalInterface
+    static interface MainMethod {
+        void main(String[] args) throws Throwable;
+    }
+
     public static class TaskLog {
         public boolean thrown = false;
         public TaskLog report(String message) {
@@ -120,10 +148,10 @@ public class ModAgent {
         }
     }
     // Java agent static interface
-    public static void premain(String agentArgs, Instrumentation inst) throws Exception {
+    public static void premain(String agentArgs, Instrumentation inst) throws Throwable {
         new ModAgent(agentArgs, inst).start();
     }
-    public static void agentmain(String agentArgs, Instrumentation inst) throws Exception {
+    public static void agentmain(String agentArgs, Instrumentation inst) throws Throwable {
         new ModAgent(agentArgs, inst).start();
     }
 }

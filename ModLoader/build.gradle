@@ -3,27 +3,28 @@ plugins {
 	id 'java'
 }
 
-sourceSets {
-	main {
-		resources {
-			// there's probably a better way to do this but whatever
-			srcDir project('boot-jar').tasks.jar.destinationDirectory
-		}
+configurations {
+	bundled {
+		canBeConsumed = false
+		canBeResolved = true
 	}
+	compileClasspath.extendsFrom(bundled)
 }
-
-tasks.processResources.dependsOn('boot-jar:jar')
 
 dependencies {
 	compileOnly files("${DRILLDOWN_INSTALLDIR}/${DRILLDOWN_JARNAME}")
-    compileOnly project(':StubLoader')
-	compileOnly project('boot-jar')
+	bundled project('boot-jar')
 	implementation 'org.ow2.asm:asm:9.2'
 	implementation 'org.ow2.asm:asm-commons:9.2'
 	implementation 'org.ow2.asm:asm-util:9.2'
 	implementation 'org.ow2.asm:asm-tree:9.2'
 }
 
+jar {
+	from project.configurations.bundled
+}
+
 shadowJar {
 	minimize()
+	from project.configurations.bundled
 }

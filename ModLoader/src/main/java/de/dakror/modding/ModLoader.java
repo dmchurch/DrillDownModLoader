@@ -26,7 +26,7 @@ import java.util.Map;
 import java.util.WeakHashMap;
 
 import de.dakror.modding.loader.IModLoader;
-import de.dakror.modding.loader.ModClassLoader;
+import de.dakror.modding.loader.IModPlatform;
 
 /**
  * The following description is out-of-date. First, ModLoader isn't itself a ClassLoader, because of
@@ -121,28 +121,28 @@ import de.dakror.modding.loader.ModClassLoader;
 
 abstract public class ModLoader implements IModLoader, ModAPI {
     public static final String MODLOADER_IMPL = System.getProperty("de.dakror.modding.impl", "de.dakror.modding.asm.ASMModLoader");
-    protected ModClassLoader classLoader;
+    protected IModPlatform modPlatform;
     protected URL[] modUrls;
     protected List<IBaseMod> mods = new ArrayList<>();
     protected List<IClassMod<?,?>> classMods = new ArrayList<>();
     protected List<IResourceMod> resourceMods = new ArrayList<>();
 
-    public static IModLoader newInstance(ModClassLoader modClassLoader, String[] args) throws ClassNotFoundException, ClassCastException {
+    public static IModLoader newInstance(IModPlatform modPlatform, String[] args) throws ClassNotFoundException, ClassCastException {
         Class<?> modLoaderClass = Class.forName(MODLOADER_IMPL);
 
         assert modLoaderClass != ModLoader.class; // avoid this infinite loop, let's do
         try {
             // Try delegating to the defined loader's static newInstance method, if it exists. If not we'll just try direct instantiation.
-            Method newInstanceMethod = modLoaderClass.getDeclaredMethod("newInstance", ModClassLoader.class, String[].class);
+            Method newInstanceMethod = modLoaderClass.getDeclaredMethod("newInstance", IModPlatform.class, String[].class);
 
             // double-check that we're not recursing ourselves
             if (!newInstanceMethod.equals(ModLoader.class.getDeclaredMethod("newInstance")))  {
-                return (IModLoader) newInstanceMethod.invoke(null, modClassLoader, args);
+                return (IModLoader) newInstanceMethod.invoke(null, modPlatform, args);
             }
         } catch (NoSuchMethodException|IllegalAccessException|IllegalArgumentException ignore) {
         } catch (InvocationTargetException ite) {
             // We might care about this. Spit out diagnostics before continuing.
-            ModAPI.DEBUGLN("Exception while executing %s.newInstance(%s, %s): %s", MODLOADER_IMPL, modClassLoader, Arrays.toString(args), ite.getTargetException());
+            ModAPI.DEBUGLN("Exception while executing %s.newInstance(%s, %s): %s", MODLOADER_IMPL, modPlatform, Arrays.toString(args), ite.getTargetException());
         }
 
         // No static newInstance() on the target class. That's fine, we'll just try instantiating it ourselves.
@@ -157,11 +157,11 @@ abstract public class ModLoader implements IModLoader, ModAPI {
     }
 
     @Override
-    public ModLoader init(ModClassLoader modClassLoader, ClassLoader appLoader, String[] args) {
-        this.classLoader = modClassLoader;
+    public ModLoader init(IModPlatform modPlatform, ClassLoader appLoader, String[] args) {
+        this.modPlatform = modPlatform;
         this.modUrls = findMods();
 
-        modClassLoader.addModURLs(modUrls);
+        modPlatform.addModURLs(modUrls);
 
         implInit();
         getMod(IModScanner.class).scanForMods(this);
@@ -175,7 +175,13 @@ abstract public class ModLoader implements IModLoader, ModAPI {
     protected URL[] findMods() {
         debugln("finding mods");
         List<URL> mods = new ArrayList<URL>();
+        URL modloaderLocation = ModLoader.class.getProtectionDomain().getCodeSource().getLocation();
+        mods.add(modloaderLocation);
         try {
+            String testMod = System.getProperty("de.dakror.modding.testmod");
+            if (testMod != null) {
+                mods.add(modloaderLocation.toURI().resolve(testMod).toURL());
+            }
             File modDir = new File("./mods");
             if (modDir.isDirectory()) {
                 PathMatcher jarMatcher = FileSystems.getDefault().getPathMatcher("glob:**.jar");
@@ -205,11 +211,11 @@ abstract public class ModLoader implements IModLoader, ModAPI {
     }
 
     public ClassLoader getClassLoader() {
-        return classLoader;
+        return modPlatform.getClassLoader();
     }
 
     public void registerMod(String modClassname) throws ClassNotFoundException, ClassCastException {
-        Class<?> rawClass = classLoader.loadClass(modClassname);
+        Class<?> rawClass = modPlatform.loadClass(modClassname);
         Class<? extends IBaseMod> modClass = null;
         try {
             modClass = rawClass.asSubclass(IBaseMod.class);
@@ -333,7 +339,7 @@ abstract public class ModLoader implements IModLoader, ModAPI {
             if (!mod.hooksResource(name)) {
                 continue;
             }
-            var newStream = mod.redefineResourceStream(name, stream, classLoader);
+            var newStream = mod.redefineResourceStream(name, stream, modPlatform.getClassLoader());
             if (newStream != null) {
                 stream = newStream;
             }
@@ -374,10 +380,12 @@ abstract public class ModLoader implements IModLoader, ModAPI {
         patcher.patchResources();
         debugln("patching enums");
         Patcher.patchEnums();
-        debugln("loading main class");
-        var cls = classLoader.findClass(mainClass); // not loadClass, we want to be sure our classloader is loading it
-        debugln("calling main()");
-        cls.getMethod("main", String[].class).invoke(null, (Object) args);
+        if (mainClass != null) {
+            debugln("loading main class");
+            var cls = modPlatform.loadClass(mainClass); // not loadClass, we want to be sure our classloader is loading it
+            debugln("calling main()");
+            cls.getMethod("main", String[].class).invoke(null, (Object) args);
+        }
     }
 
     ///////////// INTERFACES ////////////

@@ -14,8 +14,6 @@ import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.security.ProtectionDomain;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -23,16 +21,7 @@ import java.util.Map;
 import java.util.StringTokenizer;
 import java.util.WeakHashMap;
 
-// We can't afford to actually import the agent's boot Interceptor class, in case ModClassLoader was
-// loaded in some way other than through ModAgent. So we create our own Interceptor$IClassInterceptor
-// and trust the agent to rewrite it into the appropriate inheritance.
-
-// import de.dakror.modding.agent.boot.Interceptor;
-interface Interceptor { interface IClassInterceptor {
-    Class<?> interceptedFindClass(ClassLoader loader, String name) throws ClassNotFoundException;
-} }
-public class ModClassLoader extends URLClassLoader implements Interceptor.IClassInterceptor {
-    private static final String MODLOADER_CLASS = "de.dakror.modding.ModLoader";
+public class ModClassLoader extends URLClassLoader implements ModPlatformBase {
     private static final Map<ClassLoader, ModClassLoader> modClassLoaderHints = new WeakHashMap<>();
     private static final String MY_PACKAGE_PREFIX = ModClassLoader.class.getPackageName() + ".";
 
@@ -45,7 +34,6 @@ public class ModClassLoader extends URLClassLoader implements Interceptor.IClass
     private Map<String, ProtectionDomain> packageDomains = new HashMap<>();
     private boolean initialized = false;
     private boolean stubLauncher;
-    private String noInterception = null;
 
     public static ModClassLoader getModClassLoader(ClassLoader hint) {
         for (ClassLoader loader = hint; loader != null; loader = loader.getParent()) {
@@ -126,18 +114,17 @@ public class ModClassLoader extends URLClassLoader implements Interceptor.IClass
         modClassLoaderHints.put(loader, this);
     }
 
+    @Override
+    public ClassLoader getClassLoader() {
+        return this;
+    }
+
     public boolean addModURL(URL modUrl) {
         if (!List.of(getURLs()).contains(modUrl)) {
             addURL(modUrl);
             return true;
         }
         return false;
-    }
-
-    public void addModURLs(URL[] modUrls) {
-        for (var url: modUrls) {
-            addModURL(url);
-        }
     }
 
     public URL[] getModUrls() {
@@ -149,26 +136,6 @@ public class ModClassLoader extends URLClassLoader implements Interceptor.IClass
     }
 
     public IModLoader getModLoader() {
-        return modLoader;
-    }
-
-    // We don't use this, but some debuggers do.
-    void appendToClassPathForInstrumentation(String path) {
-        try {
-            addURL(new File(path).toURI().toURL());
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    private IModLoader initModLoader(String[] args) throws Exception {
-        if (modLoader == null) {
-            var modLoaderClass = loadClass(MODLOADER_CLASS);
-            var loader = (IModLoader) modLoaderClass.getMethod("newInstance", ModClassLoader.class, String[].class).invoke(null, this, args);
-            modLoader = loader.init(this, appLoader, args);
-            // on return from init, loader must be ready to answer our queries
-            stubLauncher = false;
-        }
         return modLoader;
     }
 
@@ -184,11 +151,9 @@ public class ModClassLoader extends URLClassLoader implements Interceptor.IClass
     private ProtectionDomain getProtectionDomain(String name) {
         ProtectionDomain pd = packageDomains.get(getPackageName(name));
         if (pd == null) {
-            noInterception = name;
             try {
                 pd = recordPD(appLoader.loadClass(name)).getProtectionDomain();
             } catch (ClassNotFoundException e) {}
-            noInterception = null;
         }
         return pd;
     }
@@ -228,17 +193,9 @@ public class ModClassLoader extends URLClassLoader implements Interceptor.IClass
         return null;
     }
 
-    public Class<?> interceptedFindClass(ClassLoader loader, String name) throws ClassNotFoundException {
-        if (name.startsWith(MY_PACKAGE_PREFIX)) {
-            // don't intercept load of our sibling classes
-            throw new UnsupportedOperationException("Sibling load");
-        } else if (noInterception != null && name.equals(noInterception)) {
-            noInterception = null;
-            throw new UnsupportedOperationException("no interception for "+name);
-        }
-        var ret = this.findLoadedClass(name);
-        if (ret != null) return ret;
-        return findClass(name);
+    @Override
+    public void resetStats() {
+        time = count = 0;
     }
 
     // findClass is only called the first time we look for a class, and ONLY if the system
@@ -260,7 +217,7 @@ public class ModClassLoader extends URLClassLoader implements Interceptor.IClass
                 }
             }
         }
-        Instant start = Instant.now();
+        long start = System.nanoTime();
         Class<?> loadedClass = null;
         try {
             if (modLoader == null || !modLoader.classHooked(name)) {
@@ -274,33 +231,24 @@ public class ModClassLoader extends URLClassLoader implements Interceptor.IClass
             ProtectionDomain pd = getProtectionDomain(name);
             return loadedClass = defineClass(name, code, 0, code.length, pd);
         } catch (Exception e) {
-            start = null;
+            start = -1;
             throw e;
         } finally {
-            if (start != null) {
-                var elapsed = ChronoUnit.NANOS.between(start, Instant.now());
+            if (start != -1) {
+                var elapsed = System.nanoTime() - start;
                 count++;
                 time += elapsed;
                 if (modLoader != null) {
                     modLoader.reportLoad(name, loadedClass, elapsed);
                 }
             }
-            if (name.equals("com.badlogic.gdx.math.Interpolation$BounceIn")) {
-                System.out.println(String.format("Loaded %d classes in %d ns (%.3f ms), %.3f ms/class", count, time, (double)time/1000000.0, (double)time/1000000.0/count));
-            }
         }
     }
 
     public void start(String mainClass, String[] args) throws Exception {
-        initModLoader(args).start(mainClass, args);
+        createModLoader(args).start(mainClass, args);
     }
 
-    public static void fromStub(Class<?> mainClass, String[] args) {
-        try {
-            ModClassLoader.getModClassLoader(mainClass.getClassLoader()).start(mainClass.getName(), args);
-        } catch (Exception e) { }
-    }
-    
     // partially copied from org.scannotation.ClasspathUrlFinder#findClassPaths. It's important that this
     // package be self-contained.
     public static URL[] findClassPaths(ClassLoader appLoader)

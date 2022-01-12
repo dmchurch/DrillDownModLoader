@@ -1,12 +1,17 @@
 package de.dakror.modding.agent;
 
+import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.Instrumentation;
 import java.lang.instrument.UnmodifiableClassException;
-import java.lang.reflect.InvocationTargetException;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
+import java.util.Map;
+import java.util.Set;
 
 import de.dakror.modding.agent.ModAgent.TaskLog;
 import de.dakror.modding.agent.boot.Interceptor;
 import de.dakror.modding.agent.boot.Interceptor.IClassInterceptor;
+import de.dakror.modding.loader.ModClassInterceptor;
 
 public class AgentTrampoline {
     public final ClassLoader classLoader;
@@ -18,7 +23,7 @@ public class AgentTrampoline {
     }
 
     public static IClassInterceptor hookInterceptor(ClassLoader toHook, IClassInterceptor hookTarget) {
-        return Interceptor.loaderInterceptions.put(toHook, hookTarget);
+        return Interceptor.interceptClasses(toHook, hookTarget);
     }
 
     public static void walkDeclaredClasses(Class<?> outerClass) {
@@ -27,50 +32,80 @@ public class AgentTrampoline {
         }
     }
 
-    // load the ModClassLoader class definition, transform any direct implementation of an interface named IClassInterceptor
-    // contained within a class/interface named Interceptor into an implementation of the actual Interceptor$IClassInterceptor.
-    public Object loadAndHookModClassLoader(TaskLog task, String mclClassName) {
-        final String mclIntName = mclClassName.replace('.','/');
-        var transformer = new StubReplacementTransformer(cn -> cn.startsWith(mclIntName), Interceptor.class);
-
-        Class<? extends IClassInterceptor> mclClass;
-        inst.addTransformer(transformer);
+    public ModAgent.MainMethod loadAndStartModPlatform(TaskLog task, String[] args) throws Throwable {
+        var appLoader = ClassLoader.getSystemClassLoader();
+        var mainClassName = Interceptor.reportMainClass("");
+        assert !mainClassName.equals(ModAgent.class.getName());
+        var mci = new ModClassInterceptor(appLoader, inst, mainClassName, args);
+        task.report("instantiated");
+        mci.start(null, args);
+        task.report("started");
+        Class<?> mainClass = null;
         try {
-            var cls = classLoader.loadClass(mclClassName);
-            // ensure any member classes have also been transformed before removing this transformer
-            walkDeclaredClasses(cls);
-            mclClass = cls.asSubclass(IClassInterceptor.class);
-            task.report("loaded");
-        } catch (ClassNotFoundException cnfe) {
-            task.report(cnfe);
-            return null;
-        } catch (Throwable e) {
-            throw task.fail(e);
-        } finally {
-            inst.removeTransformer(transformer);
+            mainClass = mci.loadClass(mainClassName);
+            var lhClass = Class.forName("sun.launcher.LauncherHelper");
+            // MainHookTransformer will have made this public
+            lhClass.getField("appClass").set(null, mainClass);
+        } catch (ReflectiveOperationException roe) {
+            if (mainClass == null) {
+                throw task.fail(roe);
+            }
+            task.report(roe);
         }
-
         try {
-            var mcl = mclClass.getConstructor(ClassLoader.class, Instrumentation.class).newInstance(classLoader, inst);
-            task.report("instantiated");
-            hookInterceptor(classLoader, mcl);
-            return mcl;
-        } catch (InvocationTargetException ite) {
-            throw task.fail(ite.getTargetException());
+            var mh = MethodHandles.publicLookup().findStatic(mainClass, "main", MethodType.methodType(void.class, String[].class));
+            return mh::invoke;
         } catch (ReflectiveOperationException roe) {
             throw task.fail(roe);
         }
     }
 
     void hookClassLoader(TaskLog task) {
-        var transformer = new CallInterceptionTransformer(classLoader);
-        inst.addTransformer(transformer, true);
-        try {
-            inst.retransformClasses(transformer.classesToRetransform);
+        var javaBase = Object.class.getModule();
+        var bootModule = Interceptor.class.getModule();
+        var myModule = AgentTrampoline.class.getModule();
+        inst.redefineModule(/* module = */ javaBase,
+                            /* extraReads = */ Set.of(),
+                            /* extraExports = */ Map.of("jdk.internal.access", Set.of(bootModule),
+                                                        "jdk.internal.loader", Set.of(bootModule),
+                                                        "sun.launcher", Set.of(myModule)),
+                            /* extraOpens = */ Map.of("jdk.internal.loader", Set.of(bootModule)),
+                            /* extraUses = */ Set.of(),
+                            /* extraProvides = */ Map.of());
+        task.report("opened java.base to "+myModule);
+
+        try (var callTransformer = ctx(new CallInterceptionTransformer(classLoader), true)) {
+            inst.retransformClasses(callTransformer.transformer.classesToRetransform);
         } catch (UnmodifiableClassException uce) {
             task.fail(uce); // unlikely
         }
-        inst.removeTransformer(transformer);
+    }
+
+    void hookMainClass(TaskLog task) {
+        try (var ignore = ctx(new MainHookTransformer(), true)) {
+            inst.retransformClasses(Class.forName("sun.launcher.LauncherHelper"));
+        } catch (ClassNotFoundException|UnmodifiableClassException e) {
+            task.fail(e);
+        }
+        Interceptor.reportMainClass(ModAgent.class.getName());
+    }
+
+    private <T extends ClassFileTransformer> TransformerContext<T> ctx(T transformer, boolean canRetransform) {
+        return new TransformerContext<>(transformer, canRetransform);
+    }
+
+    private class TransformerContext<T extends ClassFileTransformer> implements AutoCloseable {
+        private final T transformer;
+
+        private TransformerContext(T transformer, boolean canRetransform) {
+            this.transformer = transformer;
+            inst.addTransformer(transformer, canRetransform);
+        }
+
+        @Override
+        public void close() {
+            inst.removeTransformer(transformer);
+        }
     }
 
 }

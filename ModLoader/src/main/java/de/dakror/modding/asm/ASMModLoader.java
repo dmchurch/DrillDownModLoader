@@ -5,6 +5,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintWriter;
+import java.lang.instrument.IllegalClassFormatException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -40,7 +41,7 @@ public class ASMModLoader extends ModLoader {
     Class<?> defineClass(String className, byte[] code) {
         definedClasses.put(className, code);
         try {
-            return classLoader.loadClass(className);            
+            return modPlatform.loadClass(className);            
         } catch (ClassNotFoundException e) {
             throw new RuntimeException(e);
         } finally {
@@ -56,7 +57,7 @@ public class ASMModLoader extends ModLoader {
             redefineClass(ASMModLoader.class.getName());
         } catch (Exception e) {}
         // reset the counting so we only track classes that ASMModLoader can touch
-        classLoader.time = classLoader.count = 0;
+        modPlatform.resetStats();
         registerMod(new ModScanner());
     }
 
@@ -113,6 +114,22 @@ public class ASMModLoader extends ModLoader {
             }
             throw e;
         }
+        return redefineClass(name, cr, false);
+    }
+
+    @Override
+    public byte[] redefineClass(String name, byte[] code) throws IllegalClassFormatException {
+        ClassReader cr = new ClassReader(code);
+        try {
+            return redefineClass(name, cr, false);
+        } catch (ClassNotFoundException cnfe) {
+            debugln("Unexpected: redefineClass threw ClassNotFoundException: ");
+            cnfe.printStackTrace();
+            return null;
+        }
+    }
+
+    private byte[] redefineClass(String name, ClassReader cr, boolean isMainClass) throws ClassNotFoundException {
         ClassWriter cw = new ClassWriter(cr, 0);
         ClassVisitor cv = cw;
         final var preWriteWrapper = new ClassVisitor(Opcodes.ASM9, cv) {
@@ -172,7 +189,7 @@ public class ASMModLoader extends ModLoader {
     }
 
     public ClassReader newIntClassReader(String intName) throws IOException {
-        try (var inputStream = classLoader.getResourceAsStream(intName+".class")) {
+        try (var inputStream = modPlatform.getResourceAsStream(intName+".class")) {
             var reader = new ClassReader(inputStream);
             readerToLoader.put(reader, this);
             return reader;
