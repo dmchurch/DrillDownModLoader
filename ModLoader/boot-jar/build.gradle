@@ -2,7 +2,6 @@ apply plugin: 'eclipse'
 
 def MODULE_NAME = 'ALL-UNNAMED';
 def MODULE_DEPS = [
-    'java.base/jdk.internal.access',
     'java.base/jdk.internal.loader',
 ];
 

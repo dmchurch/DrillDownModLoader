@@ -65,8 +65,9 @@ public class ModClassInterceptor extends NullInterceptor implements ModPlatformB
             // as long as there's any sort of classfile there already we can just use the transform() path
             return source.findClass(name);
         } catch (ClassNotFoundException e) { }
-        byte[] code = modLoader.redefineClass(name);
-        return source.defineClass(name, code, null);
+        throw new ClassNotFoundException(name);
+        // byte[] code = modLoader.redefineClass(name);
+        // return source.defineClass(name, code, null);
     }
 
     @Override

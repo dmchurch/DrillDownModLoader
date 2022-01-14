@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Set;
 
 import de.dakror.modding.agent.ModAgent.TaskLog;
+import de.dakror.modding.agent.boot.CallAdapter;
 import de.dakror.modding.agent.boot.Interceptor;
 import de.dakror.modding.agent.boot.Interceptor.IClassInterceptor;
 import de.dakror.modding.platform.ModClassInterceptor;
@@ -66,15 +67,14 @@ public class AgentTrampoline {
         var myModule = AgentTrampoline.class.getModule();
         inst.redefineModule(/* module = */ javaBase,
                             /* extraReads = */ Set.of(),
-                            /* extraExports = */ Map.of("jdk.internal.access", Set.of(bootModule),
-                                                        "jdk.internal.loader", Set.of(bootModule),
+                            /* extraExports = */ Map.of("jdk.internal.loader", Set.of(bootModule),
                                                         "sun.launcher", Set.of(myModule)),
                             /* extraOpens = */ Map.of("jdk.internal.loader", Set.of(bootModule)),
                             /* extraUses = */ Set.of(),
                             /* extraProvides = */ Map.of());
         task.report("opened java.base to "+myModule);
 
-        try (var callTransformer = ctx(new CallInterceptionTransformer(classLoader), true)) {
+        try (var callTransformer = ctx(new CallInterceptionTransformer(classLoader, CallAdapter.getUCP(classLoader)), true)) {
             inst.retransformClasses(callTransformer.transformer.classesToRetransform);
         } catch (UnmodifiableClassException uce) {
             task.fail(uce); // unlikely

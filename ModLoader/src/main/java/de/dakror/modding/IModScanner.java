@@ -4,6 +4,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 public interface IModScanner extends ModLoader.IBaseMod {
     // required implementations
@@ -51,6 +52,7 @@ public interface IModScanner extends ModLoader.IBaseMod {
         return Arrays.stream(getAnnotatedClasses(annotationClass))
                     .map(cn -> { try { return loader.loadClass(cn); }
                                  catch (Exception e) { throw new RuntimeException(e); } })
+                    .collect(Collectors.toSet())
                     .toArray(Class[]::new);
     }
 

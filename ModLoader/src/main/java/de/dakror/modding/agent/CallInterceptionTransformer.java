@@ -7,6 +7,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
@@ -23,7 +24,7 @@ import de.dakror.modding.agent.boot.Interceptor;
 import de.dakror.modding.agent.boot.Interceptor.NoInterceptionException;
 
 public class CallInterceptionTransformer implements ClassFileTransformer {
-    private static final Map<Method, Method> INTERCEPTIONS = getInterceptedMethods();
+    private static final Map<Method, Map<Class<?>, Method>> INTERCEPTIONS = getInterceptedMethods();
 
     static {
         if ("true".equals(System.getProperty("de.dakror.modding.boot.debug"))) {
@@ -34,19 +35,31 @@ public class CallInterceptionTransformer implements ClassFileTransformer {
     private final Map<String, Map<Method, Method>> methodsToHookByClass;
     final Class<?>[] classesToRetransform;
     
-    CallInterceptionTransformer(Object target) {
+    CallInterceptionTransformer(Object... targets) {
         this.methodsToHookByClass = new HashMap<>();
 
-        var methodsToHook = new HashMap<>(INTERCEPTIONS);
+        var methodsToHook = new HashMap<>(INTERCEPTIONS.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, e -> new HashMap<>(e.getValue()))));
         var classesToHook = new HashSet<Class<?>>();
 
-        for (Class<?> checkClass = target.getClass(); checkClass != null && !methodsToHook.isEmpty(); checkClass = checkClass.getSuperclass()) {
-            for (var reflectMethod: checkClass.getDeclaredMethods()) {
-                var baseMethod = Method.getMethod(reflectMethod);
-                var hookMethod = methodsToHook.remove(baseMethod);
-                if (hookMethod != null) {
-                    methodsToHookByClass.computeIfAbsent(checkClass.getName().replace('.', '/'), k -> new HashMap<>()).put(baseMethod, hookMethod);
-                    classesToHook.add(checkClass);
+        for (var target: targets) {
+            if (target == null) {
+                continue;
+            }
+            for (Class<?> checkClass = target.getClass(); checkClass != null && !methodsToHook.isEmpty(); checkClass = checkClass.getSuperclass()) {
+                for (var reflectMethod: checkClass.getDeclaredMethods()) {
+                    var baseMethod = Method.getMethod(reflectMethod);
+                    var hookMethods = methodsToHook.get(baseMethod);
+                    if (hookMethods == null) continue;
+                    for (var hookClass: hookMethods.keySet()) {
+                        if (!hookClass.isAssignableFrom(checkClass)) continue;
+                        var hookMethod = hookMethods.remove(hookClass);
+                        if (hookMethods.isEmpty()) {
+                            methodsToHook.remove(baseMethod);
+                        }
+                        methodsToHookByClass.computeIfAbsent(checkClass.getName().replace('.', '/'), k -> new HashMap<>()).put(baseMethod, hookMethod);
+                        classesToHook.add(checkClass);
+                        break;
+                    }
                 }
             }
         }
@@ -64,7 +77,6 @@ public class CallInterceptionTransformer implements ClassFileTransformer {
         var cw = new ClassWriter(cr, 0);
         try {
             cr.accept(new ClassVisitor(Opcodes.ASM9, new CheckClassAdapter(cw, true)) {
-                Map<Method, Method> methodsToHook = new HashMap<>(INTERCEPTIONS);
                 @Override
                 public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
                     final var mv = super.visitMethod(access, name, descriptor, signature, exceptions);
@@ -110,8 +122,8 @@ public class CallInterceptionTransformer implements ClassFileTransformer {
         }
     }
 
-    static Map<Method, Method> getInterceptedMethods() {
-        Map<Method, Method> methods = new HashMap<>();
+    static Map<Method, Map<Class<?>, Method>> getInterceptedMethods() {
+        Map<Method, Map<Class<?>, Method>> methods = new HashMap<>();
         for (var reflectMethod: Interceptor.class.getDeclaredMethods()) {
             int mod = reflectMethod.getModifiers();
             if (Modifier.isPublic(mod) && Modifier.isStatic(mod)) {
@@ -119,7 +131,12 @@ public class CallInterceptionTransformer implements ClassFileTransformer {
                 var hookArgTypes = hookMethod.getArgumentTypes();
                 var baseMethod = new Method(hookMethod.getName(), hookMethod.getReturnType(),
                                             Arrays.copyOfRange(hookArgTypes, 1, hookArgTypes.length));
-                methods.put(baseMethod, hookMethod);
+                methods.merge(baseMethod, Map.of(reflectMethod.getParameterTypes()[0], hookMethod), (a, b) -> {
+                    @SuppressWarnings("unchecked")
+                    Map.Entry<Class<?>, Method>[] entries = a.entrySet().toArray(new Map.Entry[a.size() + 1]);
+                    entries[a.size()] = b.entrySet().iterator().next();
+                    return Map.ofEntries(entries);
+                });
             }
         }
         return Map.copyOf(methods);

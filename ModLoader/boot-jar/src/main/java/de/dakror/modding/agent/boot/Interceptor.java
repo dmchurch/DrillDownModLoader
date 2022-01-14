@@ -6,8 +6,8 @@ import java.util.Enumeration;
 import java.util.Map;
 import java.util.WeakHashMap;
 
-import jdk.internal.access.JavaLangAccess;
-import jdk.internal.access.SharedSecrets;
+import jdk.internal.loader.Resource;
+import jdk.internal.loader.URLClassPath;
 
 // public static methods in this class all intercept the instance method of the same name in ClassLoader, with
 // the same arguments except for an additional ClassLoader at the start. It must be public so the rewritten
@@ -15,16 +15,20 @@ import jdk.internal.access.SharedSecrets;
 public final class Interceptor {
     private static final Map<ClassLoader, IClassInterceptor> loaderInterceptions = new WeakHashMap<>();
     private static final Map<ClassLoader, CallAdapter> loaderAdapters = new WeakHashMap<>();
+    static final Map<URLClassPath, ClassLoader> ucpLoaders = new WeakHashMap<>();
     public static final NoInterceptionException NO_INTERCEPTION = new NoInterceptionException(null, null, false, false);
     public static boolean DEBUG_INTERCEPTOR = false;
-    static final JavaLangAccess JLA = SharedSecrets.getJavaLangAccess();
-
+    public static final Class<?> ucpClass = URLClassPath.class;
     static final ThreadLocal<Boolean> inRecall = ThreadLocal.withInitial(() -> false);
     
     public static final IClassInterceptor NULL_INTERCEPTOR = new NullInterceptor();
 
     public static CallAdapter interceptTarget(ClassLoader target) {
-        return loaderAdapters.computeIfAbsent(target, CallAdapter::new);
+        var adapter = loaderAdapters.computeIfAbsent(target, CallAdapter::new);
+        if (adapter.ucp != null) {
+            ucpLoaders.put(adapter.ucp, target);
+        }
+        return adapter;
     }
 
     public static IClassInterceptor interceptClasses(ClassLoader target, IClassInterceptor newInterceptor) {
@@ -91,6 +95,28 @@ public final class Interceptor {
         }
     }
 
+    public static Resource getResource(URLClassPath ucp, String name, boolean check) throws NoInterceptionException {
+        if (inRecall.get()) throw NO_INTERCEPTION;
+        ClassLoader loader = ucpLoaders.getOrDefault(ucp, ClassLoader.getSystemClassLoader());
+        IClassInterceptor target = loaderInterceptions.getOrDefault(loader, NULL_INTERCEPTOR);
+        try {
+            return target.interceptedUcpGetResource(loaderAdapters.get(loader), name, check);
+        } catch (UnsupportedOperationException ioe) {
+            throw NO_INTERCEPTION;
+        }
+    }
+
+    public static Enumeration<Resource> getResources(URLClassPath ucp, String name, boolean check) throws NoInterceptionException {
+        if (inRecall.get()) throw NO_INTERCEPTION;
+        ClassLoader loader = ucpLoaders.getOrDefault(ucp, ClassLoader.getSystemClassLoader());
+        IClassInterceptor target = loaderInterceptions.getOrDefault(loader, NULL_INTERCEPTOR);
+        try {
+            return UcpResource.asResourceEnumeration(target.interceptedUcpGetResources(loaderAdapters.get(loader), name, check));
+        } catch (UnsupportedOperationException|IOException ioe) {
+            throw NO_INTERCEPTION;
+        }
+    }
+
     private static String mainClassName = null;
     public static String reportMainClass(String cn) {
         var oldCn = mainClassName;
@@ -112,6 +138,22 @@ public final class Interceptor {
         Class<?> interceptedFindClass(CallAdapter source, String name) throws ClassNotFoundException, NoInterceptionException, UnsupportedOperationException;
         URL interceptedFindResource(CallAdapter source, String name) throws NoInterceptionException, UnsupportedOperationException;
         Enumeration<URL> interceptedFindResources(CallAdapter source, String name) throws IOException, NoInterceptionException, UnsupportedOperationException;
+        default UcpResource interceptedUcpGetResource(CallAdapter source, String name, boolean check) throws NoInterceptionException, UnsupportedOperationException {
+            var url = interceptedFindResource(source, name);
+            if (url == null) throw NO_INTERCEPTION;
+            if (source.ucp != null) {
+                return UcpResource.of(name, url, source.ucp.getResource(name, check));
+            }
+            return UcpResource.of(name, url);
+        }
+        default Enumeration<UcpResource> interceptedUcpGetResources(CallAdapter source, String name, boolean check) throws IOException, NoInterceptionException, UnsupportedOperationException {
+            var urls = interceptedFindResources(source, name);
+            if (urls == null) throw NO_INTERCEPTION;
+            if (source.ucp != null) {
+                return UcpResource.enumerationOf(name, urls, source.ucp.getResources(name, check));
+            }
+            return UcpResource.enumerationOf(name, urls);
+        }
     }
 
     // No instantiation please
