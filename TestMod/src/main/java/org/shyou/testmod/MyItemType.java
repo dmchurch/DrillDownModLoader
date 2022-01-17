@@ -1,9 +1,5 @@
 package org.shyou.testmod;
 
-import static de.dakror.modding.ModAPI.*;
-
-import java.util.Arrays;
-
 import de.dakror.modding.Patcher.AugmentationClass;
 import de.dakror.modding.Patcher.AugmentationClass.DelayedInitArgs;
 import de.dakror.modding.Patcher.AugmentationClass.PreInit;
@@ -21,10 +17,10 @@ public enum MyItemType {
     @PreInit(preInitMethod="preMyItemType", inClass=Aux.class)
     @DelayedInitArgs("callSuper")
     private MyItemType(MyItemType type, int meta, String name, int worth, ItemCategory... categories) {
-        DEBUGLN("creating ItemType.%s[%d] = ItemType(%s, %d, %s, %d, [%s])", this.name(), this.ordinal(), type, meta, name, worth, String.join(", ", Arrays.stream(categories).map(String::valueOf).toArray(String[]::new)));
+        // DEBUGLN("creating ItemType.%s[%d] = ItemType(%s, %d, %s, %d, [%s])", this.name(), this.ordinal(), type, meta, name, worth, String.join(", ", Arrays.stream(categories).map(String::valueOf).toArray(String[]::new)));
         callSuper(this.name(), this.ordinal(), type, meta, name, worth+1, categories);
         // super(enumName, enumValue, type, meta, name, worth, categories);
-        DEBUGLN("created ItemType.%s[%d] = ItemType(%s, %d, %s, %d, [%s])", this.name(), this.ordinal(), type, meta, name, this.worth, String.join(", ", Arrays.stream(categories).map(String::valueOf).toArray(String[]::new)));
+        // DEBUGLN("created ItemType.%s[%d] = ItemType(%s, %d, %s, %d, [%s])", this.name(), this.ordinal(), type, meta, name, this.worth, String.join(", ", Arrays.stream(categories).map(String::valueOf).toArray(String[]::new)));
     }
 
     private void callSuper(String enumName, int enumOrd, MyItemType type, int meta, String name, int worth, ItemCategory... categories) {}
@@ -32,13 +28,13 @@ public enum MyItemType {
     @PreInit(preInitMethod="preMyItemType", inClass=Aux.class)
     private MyItemType(int value, String name, int worth, ItemCategory... categories) {
         // super(enumName, enumValue, value, name, worth, categories);
-        DEBUGLN("created ItemType.%s[%d] = ItemType(%d, %s, %d, [%s])", this.name(), this.ordinal(), value, name, worth, String.join(", ", Arrays.stream(categories).map(String::valueOf).toArray(String[]::new)));
+        // DEBUGLN("created ItemType.%s[%d] = ItemType(%d, %s, %d, [%s])", this.name(), this.ordinal(), value, name, worth, String.join(", ", Arrays.stream(categories).map(String::valueOf).toArray(String[]::new)));
     }
 
     @PreInit(preInitMethod="preMyItemType", inClass=Aux.class)
     private MyItemType(MyItemType type, int meta, MyItemType stackable) {
         // super(enumName, enumValue, type, meta, stackable);
-        DEBUGLN("created ItemType.%s[%d] = ItemType(%s, %d, %s)", this.name(), this.ordinal(), type, meta, stackable);
+        // DEBUGLN("created ItemType.%s[%d] = ItemType(%s, %d, %s)", this.name(), this.ordinal(), type, meta, stackable);
     }
 
     @SuppressWarnings("unused")
@@ -47,7 +43,7 @@ public enum MyItemType {
         private static void preMyItemType(String enumName, int enumOrd, MyItemType type, int meta, String name, int worth, ItemCategory... categories) {
         }
         private static void preMyItemType(String enumName, int enumOrd, int value, String name, int worth, ItemCategory... categories) {
-            DEBUGLN("before named init for ItemType.%s: %s", enumName, name);
+            // DEBUGLN("before named init for ItemType.%s: %s", enumName, name);
         }
         private static void preMyItemType(String enumName, int enumOrd, MyItemType type, int meta, MyItemType stackable) {
         }
@@ -66,14 +62,6 @@ public enum MyItemType {
         System.out.println(" - done - ");
     }
     static {
-        printItems();
+    //     printItems();
     }
 }
-
-// class ItemTypeBase {
-//     protected ItemTypeBase(String enumName, int enumValue, ItemTypeBase type, int worth, Element element, ItemCategory... categories) { }
-//     protected ItemTypeBase(String enumName, int enumValue, ItemTypeBase type, int worth, Composite composite, ItemCategory... categories) { }
-//     protected ItemTypeBase(String enumName, int enumValue, ItemTypeBase type, int meta, String name, int worth, ItemCategory... categories) { }
-//     protected ItemTypeBase(String enumName, int enumValue, int value, String name, int worth, ItemCategory... categories) { }
-//     protected ItemTypeBase(String enumName, int enumValue, ItemTypeBase type, int meta, ItemTypeBase stackable) { }
-// }

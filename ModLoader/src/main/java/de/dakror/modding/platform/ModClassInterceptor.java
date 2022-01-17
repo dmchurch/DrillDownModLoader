@@ -3,6 +3,7 @@ package de.dakror.modding.platform;
 import static de.dakror.modding.agent.boot.Interceptor.NO_INTERCEPTION;
 import static de.dakror.modding.agent.boot.Interceptor.interceptClasses;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -14,14 +15,17 @@ import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLConnection;
 import java.net.URLStreamHandler;
+import java.security.CodeSource;
 import java.security.ProtectionDomain;
 import java.util.Enumeration;
 import java.util.Map;
 import java.util.WeakHashMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.jar.JarFile;
 
 import de.dakror.modding.ModLoader;
 import de.dakror.modding.agent.boot.CallAdapter;
+import de.dakror.modding.agent.boot.UcpResource;
 import de.dakror.modding.agent.boot.Interceptor.NoInterceptionException;
 import de.dakror.modding.agent.boot.Interceptor.NullInterceptor;
 
@@ -30,9 +34,13 @@ public class ModClassInterceptor extends NullInterceptor implements ModPlatformB
     private final Instrumentation inst;
     private final IModLoader modLoader;
 
+    private Map<String, String> packagesToClassNames = new ConcurrentHashMap<>();
+    private String mainClass;
+
     public ModClassInterceptor(ClassLoader appLoader, Instrumentation inst, String mainClass, String[] args) {
         this.appLoader = appLoader;
         this.inst = inst;
+        this.mainClass = mainClass;
         IModLoader modLoader;
         try {
             modLoader = ModLoader.newInstance(this, args).init(this, appLoader, args);
@@ -46,6 +54,7 @@ public class ModClassInterceptor extends NullInterceptor implements ModPlatformB
     @Override
     public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined,
             ProtectionDomain protectionDomain, byte[] classfileBuffer) throws IllegalClassFormatException {
+        packagesToClassNames.putIfAbsent(className.substring(0, className.lastIndexOf('/')), className);
         if (!modLoader.classHooked(className.replace('/','.'))) {
             return null;
         }
@@ -68,6 +77,38 @@ public class ModClassInterceptor extends NullInterceptor implements ModPlatformB
         throw new ClassNotFoundException(name);
         // byte[] code = modLoader.redefineClass(name);
         // return source.defineClass(name, code, null);
+    }
+
+    @Override
+    public UcpResource interceptedUcpGetResource(CallAdapter source, String name, boolean check) throws NoInterceptionException, UnsupportedOperationException {
+        if (check || !name.endsWith(".class")) {
+            throw NO_INTERCEPTION;
+        }
+        var className = name.substring(0, name.length() - 6 /* ".class" */).replace('/', '.');
+        if (!modLoader.classHooked(className)) {
+            throw NO_INTERCEPTION;
+        }
+        var resource = source.ucpGetResource(name, check);
+        if (resource != null) {
+            return resource;
+        }
+        var packageName = className.substring(0, className.lastIndexOf('.'));
+
+        Class<?> neighborClass = null;
+
+        try {
+            var neighborName = packagesToClassNames.get(packageName.replace('.', '/'));
+            neighborClass = appLoader.loadClass(neighborName == null ? mainClass : neighborName.replace('/', '.'));
+        } catch (ClassNotFoundException cnfe) { }
+
+        CodeSource codeSource = neighborClass.getProtectionDomain().getCodeSource();
+        try {
+            byte[] code = StubFactory.makeStubFor(className);
+            return UcpResource.of(name, codeSource, code);
+        } catch (MalformedURLException e) {
+            e.printStackTrace();
+            return null;
+        }
     }
 
     @Override

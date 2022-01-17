@@ -119,8 +119,9 @@ public class ASMModLoader extends ModLoader {
 
     @Override
     public byte[] redefineClass(String name, byte[] code) throws IllegalClassFormatException {
-        ClassReader cr = new ClassReader(code);
+        ClassReader cr = newClassReader(code);
         try {
+            cr = applyMods(readerMods, name, cr, this);
             return redefineClass(name, cr, false);
         } catch (ClassNotFoundException cnfe) {
             debugln("Unexpected: redefineClass threw ClassNotFoundException: ");
@@ -183,6 +184,12 @@ public class ASMModLoader extends ModLoader {
         }
         outputStreams.clear();
     }
+
+    public ClassReader newClassReader(byte[] code) {
+        var reader = new ClassReader(code);
+        readerToLoader.put(reader, this);
+        return reader;
+}
 
     public ClassReader newClassReader(String name) throws IOException {
         return newIntClassReader(Util.toIntName(name));

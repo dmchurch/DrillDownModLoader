@@ -118,7 +118,7 @@ public class CallAdapter {
             try {
                 Interceptor.inRecall.set(true);
                 var resources = ucp.getResources(name, check);
-                return UcpResource.enumerationOf(resources);
+                return UcpResource.enumerationOfResources(resources);
             } finally {
                 Interceptor.inRecall.set(false);
             }

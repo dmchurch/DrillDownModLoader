@@ -13,7 +13,7 @@ public class Debug implements AutoCloseable {
     }
 
     protected static void println(String msg, int stackOffset) {
-        println(msg, getCaller(stackOffset).getClassName().replaceAll(".*\\.", "").replaceAll(".*-(\\w+)>","$1.").replace('$','.'));
+        println(msg, getCaller(stackOffset).getClassName().replaceAll(".*\\.", "").replaceAll(".*-(\\w+)[+>]","$1.").replace('$','.'));
     }
 
     public static void formatln(String format, Object... args) {

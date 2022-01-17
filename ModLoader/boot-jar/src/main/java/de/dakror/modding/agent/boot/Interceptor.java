@@ -23,6 +23,14 @@ public final class Interceptor {
     
     public static final IClassInterceptor NULL_INTERCEPTOR = new NullInterceptor();
 
+    static boolean inRecall() {
+        if (inRecall.get()) {
+            inRecall.remove();
+            return true;
+        }
+        return false;
+    }
+
     public static CallAdapter interceptTarget(ClassLoader target) {
         var adapter = loaderAdapters.computeIfAbsent(target, CallAdapter::new);
         if (adapter.ucp != null) {
@@ -63,7 +71,7 @@ public final class Interceptor {
     }
 
     public static Class<?> findClassOnClassPathOrNull(ClassLoader loader, String name) throws NoInterceptionException {
-        if (inRecall.get()) throw NO_INTERCEPTION;
+        if (inRecall()) throw NO_INTERCEPTION;
         IClassInterceptor target = loaderInterceptions.getOrDefault(loader, NULL_INTERCEPTOR);
         if (DEBUG_INTERCEPTOR) System.err.println(String.format("%s.findClassOnClassPathOrNull(%s)", target != NULL_INTERCEPTOR ? target : loader, name));
         try {
@@ -74,7 +82,7 @@ public final class Interceptor {
     }
 
     public static URL findResource(ClassLoader loader, String name) throws NoInterceptionException {
-        if (inRecall.get()) throw NO_INTERCEPTION;
+        if (inRecall()) throw NO_INTERCEPTION;
         IClassInterceptor target = loaderInterceptions.getOrDefault(loader, NULL_INTERCEPTOR);
         if (DEBUG_INTERCEPTOR) System.err.println(String.format("%s.findResource(%s)", target != NULL_INTERCEPTOR ? target : loader, name));
         try {
@@ -85,7 +93,7 @@ public final class Interceptor {
     }
 
     public static Enumeration<URL> findResources(ClassLoader loader, String name) throws IOException, NoInterceptionException {
-        if (inRecall.get()) throw NO_INTERCEPTION;
+        if (inRecall()) throw NO_INTERCEPTION;
         IClassInterceptor target = loaderInterceptions.getOrDefault(loader, NULL_INTERCEPTOR);
         if (DEBUG_INTERCEPTOR) System.err.println(String.format("%s.findResources(%s)", target != NULL_INTERCEPTOR ? target : loader, name));
         try {
@@ -96,18 +104,18 @@ public final class Interceptor {
     }
 
     public static Resource getResource(URLClassPath ucp, String name, boolean check) throws NoInterceptionException {
-        if (inRecall.get()) throw NO_INTERCEPTION;
+        if (inRecall()) throw NO_INTERCEPTION;
         ClassLoader loader = ucpLoaders.getOrDefault(ucp, ClassLoader.getSystemClassLoader());
         IClassInterceptor target = loaderInterceptions.getOrDefault(loader, NULL_INTERCEPTOR);
         try {
-            return target.interceptedUcpGetResource(loaderAdapters.get(loader), name, check);
+            return UcpResource.ReverseProxy.of(target.interceptedUcpGetResource(loaderAdapters.get(loader), name, check));
         } catch (UnsupportedOperationException ioe) {
             throw NO_INTERCEPTION;
         }
     }
 
     public static Enumeration<Resource> getResources(URLClassPath ucp, String name, boolean check) throws NoInterceptionException {
-        if (inRecall.get()) throw NO_INTERCEPTION;
+        if (inRecall()) throw NO_INTERCEPTION;
         ClassLoader loader = ucpLoaders.getOrDefault(ucp, ClassLoader.getSystemClassLoader());
         IClassInterceptor target = loaderInterceptions.getOrDefault(loader, NULL_INTERCEPTOR);
         try {
@@ -142,7 +150,7 @@ public final class Interceptor {
             var url = interceptedFindResource(source, name);
             if (url == null) throw NO_INTERCEPTION;
             if (source.ucp != null) {
-                return UcpResource.of(name, url, source.ucp.getResource(name, check));
+                return UcpResource.ofResource(name, url, source.ucp.getResource(name, check));
             }
             return UcpResource.of(name, url);
         }
@@ -150,7 +158,7 @@ public final class Interceptor {
             var urls = interceptedFindResources(source, name);
             if (urls == null) throw NO_INTERCEPTION;
             if (source.ucp != null) {
-                return UcpResource.enumerationOf(name, urls, source.ucp.getResources(name, check));
+                return UcpResource.enumerationOfResources(name, urls, source.ucp.getResources(name, check));
             }
             return UcpResource.enumerationOf(name, urls);
         }

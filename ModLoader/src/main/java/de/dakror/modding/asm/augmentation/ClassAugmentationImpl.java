@@ -60,7 +60,7 @@ public class ClassAugmentationImpl extends ClassAugmentationBase<ClassVisitor, C
                 if (!declaredSuperclass.equals(baseIntName) && !declaredSuperclass.startsWith("java/")) {
                     innerClassRemaps.put(declaredSuperclass, baseIntName);
                 }
-                recordInnerClasses(augIntName, baseIntName+"$"+mappedClassName(augIntName)+">");
+                recordInnerClasses(augIntName, baseIntName+"$"+mappedClassName(augIntName)+"+");
                 for (var remappedClass: innerClassRemaps.keySet()) {
                     for (var affectedClass: scanner.getIntReferencingClasses(remappedClass)) {
                         affectedClasses.get(Util.fromIntName(affectedClass)).putAll(innerClassRemaps);
