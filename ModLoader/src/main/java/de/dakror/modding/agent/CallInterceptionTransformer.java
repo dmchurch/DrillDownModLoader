@@ -1,12 +1,16 @@
 package de.dakror.modding.agent;
 
 import java.lang.instrument.ClassFileTransformer;
+import java.lang.instrument.Instrumentation;
+import java.lang.instrument.UnmodifiableClassException;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.ParameterizedType;
 import java.security.ProtectionDomain;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 import org.objectweb.asm.ClassReader;
@@ -24,7 +28,6 @@ import de.dakror.modding.agent.boot.Interceptor;
 import de.dakror.modding.agent.boot.Interceptor.NoInterceptionException;
 
 public class CallInterceptionTransformer implements ClassFileTransformer {
-    private static final Map<Method, Map<Class<?>, Method>> INTERCEPTIONS = getInterceptedMethods();
 
     static {
         if ("true".equals(System.getProperty("de.dakror.modding.boot.debug"))) {
@@ -32,20 +35,44 @@ public class CallInterceptionTransformer implements ClassFileTransformer {
         }
     }
 
-    private final Map<String, Map<Method, Method>> methodsToHookByClass;
-    final Class<?>[] classesToRetransform;
-    
-    CallInterceptionTransformer(Object... targets) {
-        this.methodsToHookByClass = new HashMap<>();
+    private final Class<?> interceptorClass;
+    private final Map<Method, Map<Class<?>, Method>> interceptions;
+    private final Map<String, Map<Method, Method>> methodsToHookByClass = new HashMap<>();
+    private final Class<?>[] classesToRetransform;
+    private final boolean isStaticInterceptor;
+    private Class<?> targetClass;
+    @SuppressWarnings("unused")
+    private Interceptor interceptorInstance;
 
-        var methodsToHook = new HashMap<>(INTERCEPTIONS.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, e -> new HashMap<>(e.getValue()))));
+    CallInterceptionTransformer(Interceptor interceptor, Class<?> target) {
+        this.interceptorClass = Objects.requireNonNull(interceptor).getClass();
+        this.isStaticInterceptor = false;
+        this.targetClass = target;
+        this.interceptorInstance = interceptor;
+
+        this.interceptions = getInterceptedMethods(interceptorClass);
+        this.classesToRetransform = findHookTargets(target).toArray(Class[]::new);
+    }
+    
+    CallInterceptionTransformer(Class<?> interceptorClass, Object... targets) {
+        this.interceptorClass = interceptorClass;
+        this.isStaticInterceptor = true;
+        this.targetClass = null;
+        this.interceptorInstance = null;
+
+        this.interceptions = getInterceptedMethods(interceptorClass);
+        this.classesToRetransform = findHookTargets(targets).toArray(Class[]::new);
+    }
+
+    private HashSet<Class<?>> findHookTargets(Object... targets) {
+        var methodsToHook = new HashMap<>(interceptions.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, e -> new HashMap<>(e.getValue()))));
         var classesToHook = new HashSet<Class<?>>();
 
         for (var target: targets) {
             if (target == null) {
                 continue;
             }
-            for (Class<?> checkClass = target.getClass(); checkClass != null && !methodsToHook.isEmpty(); checkClass = checkClass.getSuperclass()) {
+            for (Class<?> checkClass = target instanceof Class ? (Class<?>)target : target.getClass(); checkClass != null && !methodsToHook.isEmpty(); checkClass = checkClass.getSuperclass()) {
                 for (var reflectMethod: checkClass.getDeclaredMethods()) {
                     var baseMethod = Method.getMethod(reflectMethod);
                     var hookMethods = methodsToHook.get(baseMethod);
@@ -63,13 +90,33 @@ public class CallInterceptionTransformer implements ClassFileTransformer {
                 }
             }
         }
+        return classesToHook;
+    }
 
-        this.classesToRetransform = classesToHook.toArray(Class[]::new);
+    public void revert(Instrumentation inst) {
+        methodsToHookByClass.clear();
+        retransform(inst);
+        inst.removeTransformer(this);
+        interceptorInstance = null; // let GC remove it
+    }
+
+    public void apply(Instrumentation inst) {
+        inst.addTransformer(this, true);
+
+        retransform(inst);
+    }
+
+    private void retransform(Instrumentation inst) {
+        try {
+            inst.retransformClasses(classesToRetransform);
+        } catch (UnmodifiableClassException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @Override
     public byte[] transform(Module module, ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classfileBuffer) {
-        var methodsToHook = methodsToHookByClass.remove(className);
+        var methodsToHook = methodsToHookByClass.get(className);
         if (methodsToHook == null) {
             return null;
         }
@@ -83,7 +130,7 @@ public class CallInterceptionTransformer implements ClassFileTransformer {
                     final var baseMethod = new Method(name, descriptor);
                     final var interceptMethod = methodsToHook.remove(baseMethod);
                     if (interceptMethod != null) {
-                        return new InterceptionAdapter(mv, access, name, descriptor, interceptMethod);
+                        return new InterceptionAdapter(mv, access, name, descriptor, interceptMethod, cr.getClassName());
                     }
                     return mv;
                 }
@@ -98,9 +145,15 @@ public class CallInterceptionTransformer implements ClassFileTransformer {
 
     private class InterceptionAdapter extends GeneratorAdapter {
         final Method interceptMethod;
-        public InterceptionAdapter(MethodVisitor mv, int access, String name, String descriptor, Method interceptMethod) {
+        final boolean isStatic;
+        final String methodKey;
+        final String className;
+        public InterceptionAdapter(MethodVisitor mv, int access, String name, String descriptor, Method interceptMethod, String className) {
             super(Opcodes.ASM9, mv, access, name, descriptor);
             this.interceptMethod = interceptMethod;
+            this.isStatic = Modifier.isStatic(access);
+            this.methodKey = name + descriptor;
+            this.className = className;
         }
         @Override
         public void visitCode() {
@@ -111,27 +164,82 @@ public class CallInterceptionTransformer implements ClassFileTransformer {
             visitTryCatchBlock(start, end, handler, Type.getType(NoInterceptionException.class).getInternalName());
 
             mark(start);
-            loadThis();
-            loadArgs();
-            invokeStatic(Type.getType(Interceptor.class), interceptMethod);
+            if (isStatic) {
+                push(Type.getObjectType(className));
+            } else {
+                loadThis();
+            }
+            if (isStaticInterceptor) {
+                // static interceptors have the same arguments as the base method
+                loadArgs();
+                invokeStatic(Type.getType(interceptorClass), interceptMethod);
+            } else {
+                // dynamic interceptors need extra argument for which class declared this method...
+                push(Type.getType(targetClass));
+                // ... which method is getting intercepted...
+                push(this.methodKey);
+                // ...and to collect their arguments into Object[] form
+                loadArgArray();
+                invokeStatic(Type.getType(Interceptor.class), interceptMethod);
+            }
             returnValue();
             mark(end);
             mark(handler);
             pop();
             // then continue with the usual code
         }
+
+        @Override
+        public void visitMaxs(int maxStack, int maxLocals) {
+            maxStack = Math.max(maxStack, (Type.getArgumentsAndReturnSizes(interceptMethod.getDescriptor()) >> 2) + (isStaticInterceptor ? 1 : 6));
+            super.visitMaxs(maxStack, maxLocals);
+        }
     }
 
-    static Map<Method, Map<Class<?>, Method>> getInterceptedMethods() {
+    private Map<Method, Map<Class<?>, Method>> getInterceptedMethods(Class<?> interceptorClass) {
         Map<Method, Map<Class<?>, Method>> methods = new HashMap<>();
-        for (var reflectMethod: Interceptor.class.getDeclaredMethods()) {
+        for (var reflectMethod: interceptorClass.getMethods()) {
             int mod = reflectMethod.getModifiers();
-            if (Modifier.isPublic(mod) && Modifier.isStatic(mod)) {
+            if (Modifier.isStatic(mod) == isStaticInterceptor && reflectMethod.getDeclaringClass() != Object.class) {
                 var hookMethod = Method.getMethod(reflectMethod);
+                var hookReturnType = hookMethod.getReturnType();
                 var hookArgTypes = hookMethod.getArgumentTypes();
                 var baseMethod = new Method(hookMethod.getName(), hookMethod.getReturnType(),
                                             Arrays.copyOfRange(hookArgTypes, 1, hookArgTypes.length));
-                methods.merge(baseMethod, Map.of(reflectMethod.getParameterTypes()[0], hookMethod), (a, b) -> {
+                var targetParameterClass = reflectMethod.getParameterTypes()[0];
+                Class<?> targetClass = targetParameterClass;
+                if (targetParameterClass == Class.class) {
+                    // if we have a generic type for this Class<?>, use it instead
+                    var genericType = reflectMethod.getGenericParameterTypes()[0];
+                    if (genericType != null && genericType instanceof ParameterizedType) {
+                        var typeParam = ((ParameterizedType) genericType).getActualTypeArguments()[0];
+                        if (typeParam instanceof ParameterizedType) {
+                            typeParam = ((ParameterizedType)typeParam).getRawType();
+                        }
+                        if (typeParam instanceof Class) {
+                            targetClass = (Class<?>)typeParam;
+                        }
+                    }
+                }
+                if (!isStaticInterceptor) {
+                    // use the generic hook method for this return type
+                    switch (hookReturnType.getSort()) {
+                        case Type.VOID:
+                            hookMethod = Method.getMethod("void callInterceptMethodVoid(Object, Class, String, Object[])");
+                            break;
+                        case Type.INT:
+                            hookMethod = Method.getMethod("int callInterceptMethodInt(Object, Class, String, Object[])");
+                            break;
+                        case Type.BOOLEAN:
+                            hookMethod = Method.getMethod("boolean callInterceptMethodBoolean(Object, Class, String, Object[])");
+                            break;
+                        case Type.OBJECT:
+                        case Type.ARRAY:
+                            hookMethod = Method.getMethod("Object callInterceptMethodRef(Object, Class, String, Object[])");
+                            break;
+                    }
+                }
+                methods.merge(baseMethod, Map.of(targetClass, hookMethod), (a, b) -> {
                     @SuppressWarnings("unchecked")
                     Map.Entry<Class<?>, Method>[] entries = a.entrySet().toArray(new Map.Entry[a.size() + 1]);
                     entries[a.size()] = b.entrySet().iterator().next();

@@ -29,7 +29,7 @@ public class MainHookTransformer implements ClassFileTransformer {
             cr.accept(new ClassVisitor(ASM9, cw) {
                 @Override
                 public FieldVisitor visitField(int access, String name, String descriptor, String signature, Object value) {
-                    if (name.equals("appClass")) {
+                    if (classBeingRedefined == null && name.equals("appClass")) {
                         access = access & ~(ACC_PRIVATE) | ACC_PUBLIC;
                     }
                     return super.visitField(access, name, descriptor, signature, value);

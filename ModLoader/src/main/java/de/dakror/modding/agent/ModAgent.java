@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.instrument.Instrumentation;
 import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandleProxies;
 import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
@@ -31,7 +32,7 @@ public class ModAgent {
         this.appLoader = ClassLoader.getSystemClassLoader();
     }
 
-    private void start() throws Throwable {
+    private void start() {
         if (!inst.isRetransformClassesSupported()) {
             throw new UnsupportedOperationException("Bad configuration, expecting retransform capability");
         }
@@ -49,11 +50,12 @@ public class ModAgent {
             try {
                 var agentClass = appLoader.loadClass(ModAgent.class.getName());
                 agentmainHandle = publicLookup().findStatic(agentClass, "agentmain", methodType(void.class, String.class, Instrumentation.class));
-            } catch (ClassNotFoundException cnfe) {
+            } catch (ReflectiveOperationException cnfe) {
                 throw task.fail(cnfe);
             }
             task.finish();
-            agentmainHandle.invokeExact(agentArgs, inst);
+            MethodHandleProxies.asInterfaceInstance(AgentMainMethod.class, agentmainHandle).agentmain(agentArgs, inst);
+            return;
         }
         if (task(!bootJarLoaded, "Loading boot jar")) {
             JarFile bootJarFile = null;
@@ -121,8 +123,13 @@ public class ModAgent {
     }
 
     @FunctionalInterface
-    static interface MainMethod {
+    public static interface MainMethod {
         void main(String[] args) throws Throwable;
+    }
+
+    @FunctionalInterface
+    public static interface AgentMainMethod {
+        void agentmain(String agentargs, Instrumentation inst);
     }
 
     public static class TaskLog {
